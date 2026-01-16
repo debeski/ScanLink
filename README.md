@@ -76,7 +76,7 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 
 | Version | Changes |
 |---------|---------|
-| **v1.0.0** | • Initial release<br>• Basic TWAIN scanning support<br>• Single-page PDF generation<br>• Localhost API endpoint |
-| **v1.0.4** | • Added multi-page support<br>• Implemented system tray icon<br>• Added default scanner memory<br>• startup on boot option |
-| **v1.0.7** | • Added "Select Scanner" GUI dialog<br>• Improved error handling for busy scanners<br>• Added logging system |
-| **v1.0.11** | • **Major Optimization:** Implemented image compression (JPEG 85%)<br>• Added resolution controls (160/200/240/300 DPI)<br>• Reduced file size by 80% (avg page < 500KB)<br>• Added Inno Setup installer script |
+| **v0.1.0** | • Initial release<br>• Basic TWAIN scanning support<br>• Single-page PDF generation<br>• Localhost API endpoint |
+| **v0.1.4** | • Added multi-page support<br>• Implemented system tray icon<br>• Added default scanner memory<br>• startup on boot option |
+| **v0.1.7** | • Added "Select Scanner" GUI dialog<br>• Improved error handling for busy scanners<br>• Added logging system |
+| **v0.1.11** | • **Major Optimization:** Implemented image compression (JPEG 85%)<br>• Added resolution controls (160/200/240/300 DPI)<br>• Reduced file size by 80% (avg page < 500KB)<br>• Added Inno Setup installer script |
