@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "ScanLink"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "0.1.11"
 #define MyAppPublisher "Institute Document Management System"
 #define MyAppExeName "ScanLink.exe"
 

@@ -355,7 +355,7 @@ def create_tray_icon():
             title = "ScanLink"
             message = (
                 "برنامج لتشغيل الماسح الضوئي مع تطبيق الارشيف الالكتروني\n"
-                "الإصدار 1.0.0\n\n"
+                "الإصدار 0.1.11\n\n"
                 "© 2026 مركز المعلومات والتوثيق الاقتصادي"
             )
             ctypes.windll.user32.MessageBoxW(0, message, title, 0x40 | 0x00080000)
