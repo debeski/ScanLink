@@ -1,0 +1,7 @@
+Flask==3.0.0
+flask-cors==4.0.0
+Pillow==12.1.0
+reportlab==4.0.0
+pystray==0.19.5
+pytwain==2.3.0  # Ensure compatible wheel is found for Windows
+pyinstaller==6.18.0
