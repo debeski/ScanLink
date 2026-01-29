@@ -34,8 +34,8 @@ Name: "startupicon"; Description: "Run on Windows Startup"; GroupDescription: "{
 
 [Files]
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "d:\py\archive\scanner_app\app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "d:\py\archive\scanner_app\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
+Source: "d:\py\ScanLink\app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "d:\py\ScanLink\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]
