@@ -2,11 +2,11 @@
 
 
 a = Analysis(
-    ['scan_app.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[('README.md', '.')],
-    hiddenimports=[],
+    hiddenimports=['gui'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -5,10 +5,11 @@ import os
 # This script should be run from the parent directory or scanner_app folder
 
 args = [
-    'scan_app.py',
+    'main.py',
     '--onefile',
     '--noconsole',
     '--name=ScanLink',
+    '--hidden-import=gui',
 ]
 
 if os.path.exists('README.md'):

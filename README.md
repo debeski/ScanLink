@@ -54,7 +54,7 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 ### Method 3: Running from Source
 1. Install Python 3.10+.
 2. Install dependencies: `pip install -r requirements.txt`.
-3. Run the app: `python scan_app.py`.
+3. Run the app: `python main.py`.
 
 ---
 
@@ -77,6 +77,7 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 | Version | Changes |
 |---------|---------|
 | **v0.1.0** | • Initial release<br>• Basic TWAIN scanning support<br>• Single-page PDF generation<br>• Localhost API endpoint |
-| **v0.1.4** | • Added multi-page support<br>• Implemented system tray icon<br>• Added default scanner memory<br>• startup on boot option |
-| **v0.1.7** | • Added "Select Scanner" GUI dialog<br>• Improved error handling for busy scanners<br>• Added logging system |
-| **v0.1.11** | • **Major Optimization:** Implemented image compression (JPEG 85%)<br>• Added resolution controls (160/200/240/300 DPI)<br>• Reduced file size by 80% (avg page < 500KB)<br>• Added Inno Setup installer script |
+| **v0.1.1** | • Added multi-page support<br>• Implemented system tray icon<br>• Added default scanner memory<br>• startup on boot option |
+| **v0.1.2** | • Added "Select Scanner" GUI dialog<br>• Improved error handling for busy scanners<br>• Added logging system |
+| **v0.2.0** | • **Major Optimization:** Implemented image compression (JPEG 85%)<br>• Added resolution controls (160/200/240/300 DPI)<br>• Reduced file size by 80% (avg page < 500KB)<br>• Added Inno Setup installer script |
+| **v0.3.0** | • **Refactoring:** Modularized codebase (server, scanner, worker, tray)<br>• **Queue System:** Added job queue for reliable scanning<br>• **UI Improvements:** Added "Test Scan" and active status in tray<br>• **Memory:** Optimized image handling with in-memory DIB processing |
