@@ -30,3 +30,6 @@ celerybeat-schedule-wal
 # Ignore Sensetive Secrets
 **/.env
 **/.key
+ScanLinkSetup.exe
+dist
+build
