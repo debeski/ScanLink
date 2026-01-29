@@ -105,24 +105,16 @@ def save_config(config):
     except Exception as e:
         get_logger().error(f"Failed to save config: {e}")
 
-def get_version_from_readme(readme_path):
-    """Reads the last version from the README table."""
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
     try:
-        if not os.path.exists(readme_path):
-            return "0.0.0"
-        
-        with open(readme_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-            
-        # Regex to find version numbers in the table like | **v0.1.11** |
-        matches = re.findall(r'\|\s*\*\*v(\d+\.\d+\.\d+)\*\*\s*\|', content)
-        if matches:
-            return matches[-1] # Return the last found version
-            
-        return "0.0.0"
-    except Exception as e:
-        get_logger().error(f"Failed to read version: {e}")
-        return "0.0.0"
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 
 def dib_to_pil(dib_handle):
     """

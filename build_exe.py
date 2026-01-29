@@ -17,5 +17,6 @@ if os.path.exists('README.md'):
 
 if os.path.exists('app_icon.ico'):
     args.append('--icon=app_icon.ico')
+    args.append('--add-data=app_icon.ico;.')
 
 PyInstaller.__main__.run(args)

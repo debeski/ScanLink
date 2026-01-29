@@ -3,7 +3,7 @@ from PIL import Image, ImageDraw
 import threading
 import os
 import sys
-from utils import load_config, save_config, get_logger, get_version_from_readme
+from utils import load_config, save_config, get_logger, get_version_from_readme, get_resource_path
 
 logger = get_logger()
 
@@ -12,13 +12,13 @@ class TrayApp:
         self.worker = worker
         self.shutdown_event = shutdown_event
         self.icon = None
-        self.app_dir = os.path.dirname(os.path.abspath(__file__))
 
     def create_image(self):
-        icon_path = os.path.join(self.app_dir, 'app_icon.ico')
+        icon_path = get_resource_path('app_icon.ico')
         if os.path.exists(icon_path):
             return Image.open(icon_path)
         else:
+            logger.warning(f"Icon not found at {icon_path}, using default.")
             width = 64
             height = 64
             image = Image.new('RGB', (width, height), color=(255, 255, 255))
@@ -38,7 +38,7 @@ class TrayApp:
         config = load_config()
         current_res = float(config.get('resolution', 240))
         default_scanner = config.get('default_scanner', 'None')
-        version = get_version_from_readme(os.path.join(self.app_dir, 'README.md'))
+        version = get_version_from_readme(get_resource_path('README.md'))
         is_busy = self.worker.is_busy()
 
         status_text = "Status: Scanning..." if is_busy else "Status: Idle"

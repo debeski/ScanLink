@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('README.md', '.')],
+    datas=[('README.md', '.'), ('app_icon.ico', '.')],
     hiddenimports=['gui'],
     hookspath=[],
     hooksconfig={},

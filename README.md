@@ -43,7 +43,7 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 
 ### Method 1: Windows Installer (Recommended)
 1. Download and run `ScanLinkSetup.exe`.
-2. Follow the installation wizard (installs to `%LOCALAPPDATA%\ScanLink`).
+2. Follow the installation wizard (installs to `Program Files (x86)\ScanLink`).
 3. Launch **ScanLink** from your Start Menu or Desktop.
 4. The app will appear in your system tray (near the clock).
 
