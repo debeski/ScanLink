@@ -3,9 +3,27 @@ from PIL import Image, ImageDraw
 import threading
 import os
 import sys
-from utils import load_config, save_config, get_logger, get_version_from_readme, get_resource_path
+from utils import (
+    load_config, save_config, get_logger, get_resource_path,
+    is_startup_enabled, set_startup_enabled, is_ssl_available
+)
 
 logger = get_logger()
+
+def get_version_from_readme(readme_path):
+    """Extract version from README.md file."""
+    try:
+        if os.path.exists(readme_path):
+            with open(readme_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('| **v'):
+                        # Extract version like "| **v0.4.0** |"
+                        parts = line.split('**')
+                        if len(parts) >= 2:
+                            return parts[1].replace('v', '')
+    except Exception:
+        pass
+    return '0.4.0'
 
 class TrayApp:
     def __init__(self, worker, shutdown_event):
@@ -43,6 +61,7 @@ class TrayApp:
 
         status_text = "Status: Scanning..." if is_busy else "Status: Idle"
         scanner_text = f"Scanner: {default_scanner}"
+        ssl_text = "🔒 HTTPS: Enabled" if is_ssl_available() else "⚠️ HTTPS: Disabled"
 
         # Resolution setters
         def set_res(r):
@@ -80,14 +99,24 @@ class TrayApp:
                  del c['default_scanner']
                  save_config(c)
 
+        # Startup toggle
+        def on_startup_toggle(icon, item):
+            current = is_startup_enabled()
+            set_startup_enabled(not current)
+
+        def is_startup_checked(item):
+            return is_startup_enabled()
+
         return Menu(
             MenuItem(f"ScanLink v{version}", None, enabled=False),
             MenuItem(status_text, None, enabled=False),
             MenuItem(scanner_text, None, enabled=False),
+            MenuItem(ssl_text, None, enabled=False),
             Menu.SEPARATOR,
             MenuItem('Test Scan (1 Page)', on_test_scan, enabled=not is_busy),
             MenuItem('Resolution', resolution_menu),
             MenuItem('Clear Default Scanner', clear_default, enabled=not is_busy),
             Menu.SEPARATOR,
+            MenuItem('Run on Startup', on_startup_toggle, checked=is_startup_checked),
             MenuItem('Quit', on_quit)
         )

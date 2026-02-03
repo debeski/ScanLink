@@ -116,6 +116,134 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+# ============================================================================
+# SSL/HTTPS Certificate Management
+# ============================================================================
+SSL_CERT_FILE = os.path.join(APP_DIR, 'localhost.pem')
+SSL_KEY_FILE = os.path.join(APP_DIR, 'localhost-key.pem')
+MKCERT_EXE = 'mkcert.exe'
+
+def get_ssl_context():
+    """
+    Returns SSL context if certificates exist, otherwise None.
+    """
+    if os.path.exists(SSL_CERT_FILE) and os.path.exists(SSL_KEY_FILE):
+        try:
+            import ssl
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(SSL_CERT_FILE, SSL_KEY_FILE)
+            get_logger().info("SSL context loaded successfully")
+            return ctx
+        except Exception as e:
+            get_logger().error(f"Failed to load SSL context: {e}")
+            return None
+    return None
+
+def is_ssl_available():
+    """Check if SSL certificates are available."""
+    return os.path.exists(SSL_CERT_FILE) and os.path.exists(SSL_KEY_FILE)
+
+def generate_ssl_certificates():
+    """
+    Generates localhost SSL certificates using bundled mkcert.
+    Returns True on success, False on failure.
+    """
+    import subprocess
+    
+    logger = get_logger()
+    mkcert_path = get_resource_path(MKCERT_EXE)
+    
+    if not os.path.exists(mkcert_path):
+        logger.error(f"mkcert not found at {mkcert_path}")
+        return False
+    
+    try:
+        # Install local CA (one-time, requires admin on first run)
+        result = subprocess.run(
+            [mkcert_path, '-install'],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            logger.warning(f"mkcert -install warning: {result.stderr}")
+        else:
+            logger.info("mkcert CA installed successfully")
+        
+        # Generate certificates for localhost
+        result = subprocess.run(
+            [mkcert_path, '-cert-file', SSL_CERT_FILE, '-key-file', SSL_KEY_FILE,
+             'localhost', '127.0.0.1', '::1'],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            logger.error(f"mkcert certificate generation failed: {result.stderr}")
+            return False
+        
+        logger.info(f"SSL certificates generated: {SSL_CERT_FILE}")
+        return True
+        
+    except subprocess.TimeoutExpired:
+        logger.error("mkcert timed out")
+        return False
+    except Exception as e:
+        logger.error(f"SSL certificate generation failed: {e}")
+        return False
+
+def ensure_ssl_certificates():
+    """
+    Ensures SSL certificates exist, generating them if needed.
+    Returns True if certificates are available.
+    """
+    if is_ssl_available():
+        return True
+    return generate_ssl_certificates()
+
+
+# ============================================================================
+# Windows Startup Registry Management
+# ============================================================================
+STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_REG_VALUE = "ScanLink"
+
+def is_startup_enabled():
+    """Check if ScanLink is registered to run at Windows startup."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, winreg.KEY_READ) as key:
+            winreg.QueryValueEx(key, STARTUP_REG_VALUE)
+            return True
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        get_logger().warning(f"Failed to check startup status: {e}")
+        return False
+
+def set_startup_enabled(enabled):
+    """Enable or disable ScanLink startup registration."""
+    try:
+        import winreg
+        if enabled:
+            # Get the executable path
+            if getattr(sys, 'frozen', False):
+                exe_path = sys.executable
+            else:
+                exe_path = os.path.abspath(sys.argv[0])
+            
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, STARTUP_REG_VALUE, 0, winreg.REG_SZ, f'"{exe_path}"')
+            get_logger().info("Startup enabled")
+        else:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                try:
+                    winreg.DeleteValue(key, STARTUP_REG_VALUE)
+                    get_logger().info("Startup disabled")
+                except FileNotFoundError:
+                    pass  # Already not present
+        return True
+    except Exception as e:
+        get_logger().error(f"Failed to set startup: {e}")
+        return False
+
+
 def dib_to_pil(dib_handle):
     """
     Converts a TWAIN DIB handle (global memory) to a PIL Image without writing to disk.

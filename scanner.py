@@ -40,11 +40,13 @@ class ScannerManager:
             if sm:
                 sm.destroy()
 
-    def scan_to_pdf(self, request_id, gui_executor=None):
+    def scan_to_pdf(self, request_id, gui_executor=None, progress_callback=None):
         """
         Main scanning logic.
         gui_executor: function(callable) -> result
              Executes the callable on the Main Thread (for UI).
+        progress_callback: function(event, **data) -> None
+             Called with progress events: 'page_scanned', 'generating_pdf'
         """
         if not twain:
             logger.error("TWAIN module not found.")
@@ -116,6 +118,10 @@ class ScannerManager:
                                 img = img.convert('RGB')
                             images.append(img)
                             logger.debug(f"Page captured. Total: {len(images)}")
+                            
+                            # Emit progress callback
+                            if progress_callback:
+                                progress_callback('page_scanned', page_count=len(images))
                         
                         # IMPORTANT: Free the handle
                         ctypes.windll.gdi32.DeleteObject(handle)
@@ -136,6 +142,8 @@ class ScannerManager:
 
         # 6. Generate PDF
         logger.info(f"Generating PDF with {len(images)} pages.")
+        if progress_callback:
+            progress_callback('generating_pdf', page_count=len(images))
         return self._create_pdf(images)
 
     def _select_scanner_ui(self, sources):

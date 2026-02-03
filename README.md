@@ -6,8 +6,12 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 
 ## 🔐 Key Features
 
-- **🌐 Local Web API**  
-  Exposes a secure endpoint (`http://localhost:5000/scan`) to trigger scans from any web application.
+- **🔒 Secure HTTPS API**  
+  Exposes a secure endpoint (`https://localhost:5443/scan`) with auto-generated SSL certificates.
+- **🔗 Deep Link Support**  
+  Trigger scans directly from browser links using `scanlink://scan?docId=123`.
+- **📡 Real-Time WebSocket**  
+  Stream scan status updates (page count, progress, completion) to your web app.
 - **📄 Instant PDF Generation**  
   Automatically converts physical documents into optimized, multi-page PDFs ready for upload.
 - **⚙️ Configurable Quality**  
@@ -28,12 +32,13 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 ## ⚙️ Technology Stack
 
 - **Python 3.10+**: Core logic and runtime.
-- **Flask**: Lightweight local web server for API endpoints.
+- **Flask + Flask-SocketIO**: Web server with WebSocket support.
 - **PyTwain**: Low-level interface for TWAIN driver communication.
 - **Pillow (PIL)**: Advanced image processing and compression.
 - **ReportLab**: Professional PDF generation engine.
 - **PyStray**: System tray icon and menu integration.
 - **Tkinter**: Native GUI dialogs for scanner selection.
+- **mkcert**: Auto-generates trusted localhost SSL certificates.
 - **PyInstaller**: Compilation into standalone Windows executable.
 - **Inno Setup**: Professional Windows installer generation.
 
@@ -64,11 +69,15 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 2. **Select Resolution:** Right-click the tray icon → **Resolution** → Choose your preferred quality (Default: 240 DPI).
 3. **Trigger Scan:**
    - Click the **"Scan"** button in your web application.
-   - Or send a POST request to `http://localhost:5000/scan`.
+   - Or send a POST request to `https://localhost:5443/scan`.
+   - Or use a deep link: `<a href="scanlink://scan?docId=123">Scan</a>`
 4. **Scanner Selection:**
    - The first time you scan, a dialog will ask you to select your scanner.
    - Check **"Set as default"** to skip this step in the future.
    - To change scanners later, right-click the tray icon → **Clear Default Scanner**.
+5. **Real-Time Updates:**
+   - Connect via WebSocket to receive live status updates during scanning.
+   - Include `static/scanlink.js` in your Django app for easy integration.
 
 ---
 
@@ -81,3 +90,4 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 | **v0.1.2** | • Added "Select Scanner" GUI dialog<br>• Improved error handling for busy scanners<br>• Added logging system |
 | **v0.2.0** | • **Major Optimization:** Implemented image compression (JPEG 85%)<br>• Added resolution controls (160/200/240/300 DPI)<br>• Reduced file size by 80% (avg page < 500KB)<br>• Added Inno Setup installer script |
 | **v0.3.0** | • **Refactoring:** Modularized codebase (server, scanner, worker, tray)<br>• **Queue System:** Added job queue for reliable scanning<br>• **UI Improvements:** Added "Test Scan" and active status in tray<br>• **Memory:** Optimized image handling with in-memory DIB processing |
+| **v0.4.0** | • **HTTPS/SSL:** Auto-generates trusted localhost certificates via mkcert<br>• **Deep Links:** `scanlink://` protocol for instant browser-triggered scans<br>• **WebSocket:** Real-time scan status streaming (queued → page_scanned → completed)<br>• **Django Integration:** Added `scanlink.js` client library<br>• **Startup Fix:** Registry-based startup prevents double-launch bug<br>• **Callback URLs:** POST scan results directly to Django endpoints |
