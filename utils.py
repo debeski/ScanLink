@@ -115,6 +115,21 @@ def get_resource_path(relative_path):
 
     return os.path.join(base_path, relative_path)
 
+def get_version_from_readme(readme_path):
+    """Extracts version number from README.md Version History table."""
+    try:
+        if not os.path.exists(readme_path):
+            return "0.0.0"
+        with open(readme_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # Match version like v0.3.0 in the Version History table
+        match = re.search(r'\|\s*\*?\*?v?(\d+\.\d+\.\d+)\*?\*?\s*\|', content)
+        if match:
+            return match.group(1)
+    except Exception as e:
+        get_logger().error(f"Failed to read version from README: {e}")
+    return "0.0.0"
+
 
 def dib_to_pil(dib_handle):
     """

@@ -27,19 +27,20 @@ class TrayApp:
             return image
 
     def start(self):
-        self.icon = Icon("ScanLink", self.create_image(), "ScanLink", self.build_menu)
+        self.icon = Icon("ScanLink", self.create_image(), "ScanLink", self.build_menu())
         self.icon.run()
 
     def stop(self):
         if self.icon:
             self.icon.stop()
 
-    def build_menu(self, icon):
+    def build_menu(self):
         config = load_config()
         current_res = float(config.get('resolution', 240))
         default_scanner = config.get('default_scanner', 'None')
         version = get_version_from_readme(get_resource_path('README.md'))
         is_busy = self.worker.is_busy()
+        logger.info(f"Tray menu built: v{version}, scanner={default_scanner}, busy={is_busy}")
 
         status_text = "Status: Scanning..." if is_busy else "Status: Idle"
         scanner_text = f"Scanner: {default_scanner}"
