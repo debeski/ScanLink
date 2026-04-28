@@ -7,13 +7,25 @@ import ctypes
 import io
 import tempfile
 from logging.handlers import RotatingFileHandler
-from PIL import Image as PilImage
+
+try:
+    from PIL import Image as PilImage
+except ImportError:
+    PilImage = None
 
 # Constants
+APP_VERSION = "0.5.0"
 LOCALAPPDATA = os.getenv('LOCALAPPDATA', os.path.expanduser('~\\AppData\\Local'))
 APP_DIR = os.path.abspath(os.path.join(LOCALAPPDATA, 'ScanLink'))
 LOG_FILE = os.path.join(APP_DIR, 'scanner.log')
 CONFIG_FILE = os.path.join(APP_DIR, 'config.json')
+HTTP_HOST = "127.0.0.1"
+HTTP_PORT = 5000
+HTTPS_PORT = 5443
+DEFAULT_JOB_TTL_SECONDS = 900
+DEFAULT_RESULT_TTL_SECONDS = 300
+DEFAULT_SCAN_TIMEOUT_SECONDS = 600
+DEFAULT_GUI_TASK_TIMEOUT_SECONDS = 900
 
 # Ensure app directory exists
 os.makedirs(APP_DIR, exist_ok=True)
@@ -86,6 +98,10 @@ def load_config():
         "resolution": 240,
         "default_scanner": None,
         "cors_origins": ["*"],
+        "job_ttl_seconds": DEFAULT_JOB_TTL_SECONDS,
+        "result_ttl_seconds": DEFAULT_RESULT_TTL_SECONDS,
+        "scan_timeout_seconds": DEFAULT_SCAN_TIMEOUT_SECONDS,
+        "gui_task_timeout_seconds": DEFAULT_GUI_TASK_TIMEOUT_SECONDS,
     }
     try:
         if os.path.exists(CONFIG_FILE):
@@ -111,7 +127,7 @@ def get_resource_path(relative_path):
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        base_path = os.path.dirname(os.path.abspath(__file__))
 
     return os.path.join(base_path, relative_path)
 
@@ -123,7 +139,7 @@ SSL_CERT_FILE = os.path.join(APP_DIR, 'localhost.pem')
 SSL_KEY_FILE = os.path.join(APP_DIR, 'localhost-key.pem')
 MKCERT_EXE = 'mkcert.exe'
 
-def get_ssl_context():
+def get_ssl_context(log_errors=True):
     """
     Returns SSL context if certificates exist, otherwise None.
     """
@@ -132,16 +148,16 @@ def get_ssl_context():
             import ssl
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ctx.load_cert_chain(SSL_CERT_FILE, SSL_KEY_FILE)
-            get_logger().info("SSL context loaded successfully")
             return ctx
         except Exception as e:
-            get_logger().error(f"Failed to load SSL context: {e}")
+            if log_errors:
+                get_logger().error(f"Failed to load SSL context: {e}")
             return None
     return None
 
 def is_ssl_available():
     """Check if SSL certificates are available."""
-    return os.path.exists(SSL_CERT_FILE) and os.path.exists(SSL_KEY_FILE)
+    return get_ssl_context(log_errors=False) is not None
 
 def generate_ssl_certificates():
     """
@@ -188,13 +204,15 @@ def generate_ssl_certificates():
         logger.error(f"SSL certificate generation failed: {e}")
         return False
 
-def ensure_ssl_certificates():
+def ensure_ssl_certificates(generate_if_missing=False):
     """
-    Ensures SSL certificates exist, generating them if needed.
+    Ensures SSL certificates exist and optionally generates them.
     Returns True if certificates are available.
     """
     if is_ssl_available():
         return True
+    if not generate_if_missing:
+        return False
     return generate_ssl_certificates()
 
 
@@ -300,6 +318,9 @@ def dib_to_pil(dib_handle):
         bmp_buffer.seek(0)
         
         # Load with PIL
+        if PilImage is None:
+            get_logger().error("Pillow is not installed; cannot convert TWAIN image data")
+            return None
         img = PilImage.open(bmp_buffer)
         img.load()  # Force load pixel data
         

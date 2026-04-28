@@ -1,35 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import os
-
-# Check for mkcert.exe
-mkcert_path = 'mkcert.exe'
-mkcert_exists = os.path.exists(mkcert_path)
-
-# Data files to bundle
-datas = [
-    ('README.md', '.'),
-    ('app_icon.ico', '.'),
-]
-
-# Add mkcert if it exists
-if mkcert_exists:
-    datas.append((mkcert_path, '.'))
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=datas,
-    hiddenimports=[
-        'gui',
-        'gui.dialogs',
-        'PIL',
-        'PIL.Image',
-        'PIL.ImageDraw',
-        'flask_socketio',
-        'engineio.async_drivers.threading',
-    ],
+    datas=[('README.md', '.'), ('app_icon.ico', '.')],
+    hiddenimports=['gui', 'gui.dialogs', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'protocol_handler'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

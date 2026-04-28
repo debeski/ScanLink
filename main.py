@@ -1,148 +1,143 @@
-import threading
-import queue  # queue module
-import tkinter as tk
-import time
-import sys
-import os
 import argparse
+import queue
+import sys
+import threading
+import tkinter as tk
 
-# Import modules
-from utils import setup_logging, get_logger, ensure_ssl_certificates
-from worker import ScanWorker, set_status_callback
-from server import run_server, emit_scan_status
-from tray import TrayApp
 from gui.dialogs import init_gui
-from protocol_handler import parse_protocol_url, extract_protocol_url_from_args
+from protocol_handler import (
+    extract_protocol_url_from_args,
+    forward_protocol_command,
+    is_existing_instance_running,
+    parse_protocol_url,
+)
+from server import run_server
+from tray import TrayApp
+from utils import APP_VERSION, ensure_ssl_certificates, get_logger, is_ssl_available, setup_logging
+from worker import ScanWorker, set_status_callback
+
 
 def main():
-    # 1. Setup Logging
     logger = setup_logging()
-    logger.info("ScanLink v0.4.0 Starting...")
+    logger.info("ScanLink v%s starting", APP_VERSION)
 
-    # 2. Parse Command Line Arguments
-    parser = argparse.ArgumentParser(description='ScanLink - Scanner Bridge for Web Apps')
-    parser.add_argument('url', nargs='?', help='Protocol URL (scanlink://...)')
-    parser.add_argument('--generate-ssl', action='store_true', help='Generate SSL certificates and exit')
+    parser = argparse.ArgumentParser(description="ScanLink - Scanner Bridge for Web Apps")
+    parser.add_argument("url", nargs="?", help="Protocol URL (scanlink://...)")
+    parser.add_argument(
+        "--generate-ssl",
+        action="store_true",
+        help="Generate trusted localhost SSL certificates and exit",
+    )
     args, unknown = parser.parse_known_args()
-    
-    # Check for protocol URL in arguments (Windows passes it as first arg)
-    protocol_url = args.url or extract_protocol_url_from_args(unknown)
-    protocol_command = None
-    if protocol_url:
-        protocol_command = parse_protocol_url(protocol_url)
-        logger.info(f"Launched via protocol: {protocol_command}")
 
-    # 3. Handle --generate-ssl flag
     if args.generate_ssl:
         logger.info("Generating SSL certificates...")
-        if ensure_ssl_certificates():
+        if ensure_ssl_certificates(generate_if_missing=True):
             logger.info("SSL certificates generated successfully")
-            sys.exit(0)
-        else:
-            logger.error("Failed to generate SSL certificates")
-            sys.exit(1)
+            return 0
+        logger.error("Failed to generate SSL certificates")
+        return 1
 
-    # 4. Ensure SSL certificates exist (generate on first run)
-    ssl_ready = ensure_ssl_certificates()
-    if ssl_ready:
-        logger.info("SSL certificates ready")
+    protocol_url = args.url or extract_protocol_url_from_args(unknown)
+    protocol_command = parse_protocol_url(protocol_url) if protocol_url else None
+    if protocol_command:
+        logger.info("Launched via protocol: %s", protocol_command)
+
+    if protocol_command and forward_protocol_command(protocol_command):
+        logger.info("Protocol request forwarded to the already-running instance")
+        return 0
+
+    if is_existing_instance_running():
+        logger.info("Another ScanLink instance is already running. Exiting.")
+        return 0
+
+    if is_ssl_available():
+        logger.info("Trusted localhost HTTPS certificates are available")
     else:
-        logger.warning("SSL not available, will use HTTP")
+        logger.info("Trusted localhost HTTPS certificates not found; HTTP loopback listener will remain available")
 
-    # 5. Shared Objects
     shutdown_event = threading.Event()
     gui_task_queue = queue.Queue()
-
-    # 6. Initialize Worker
     worker = ScanWorker(gui_task_queue)
-    
-    # Set status callback for WebSocket emissions
-    set_status_callback(emit_scan_status)
-    
-    # 7. Initialize Tray
+    set_status_callback(None)
+
     tray = TrayApp(worker, shutdown_event)
-    
-    # 8. Threads
-    # Start Worker
+
     worker.start()
-    
-    # Start Server (Flask-SocketIO)
+
     server_thread = threading.Thread(
         target=run_server,
         args=(worker, shutdown_event),
-        daemon=True
+        daemon=True,
+        name="LoopbackServerManager",
     )
     server_thread.start()
-    
-    # Start Tray
+
     tray_thread = threading.Thread(
         target=tray.start,
-        daemon=True
+        daemon=True,
+        name="TrayThread",
     )
     tray_thread.start()
 
-    # 9. Main Thread Loop (Tkinter)
     root = tk.Tk()
-    root.withdraw()  # Hide the root window
-    
-    # Initialize GUI helper with root
+    root.withdraw()
     init_gui(root)
 
-    # 10. Handle Protocol Command (if launched via scanlink://)
-    if protocol_command and protocol_command.get('action') == 'scan':
-        # Queue a scan job after a short delay to let everything initialize
-        def trigger_protocol_scan():
-            time.sleep(1)  # Wait for server to start
-            worker.submit_job(
-                doc_id=protocol_command.get('doc_id'),
-                callback_url=protocol_command.get('callback_url')
-            )
-            logger.info("Protocol-triggered scan queued")
-        
-        protocol_thread = threading.Thread(target=trigger_protocol_scan, daemon=True)
-        protocol_thread.start()
+    if protocol_command and protocol_command.get("action") == "scan":
+        def queue_protocol_scan():
+            try:
+                worker.submit_job(
+                    doc_id=protocol_command.get("doc_id"),
+                    callback_url=protocol_command.get("callback_url"),
+                    source="protocol",
+                )
+                logger.info("Protocol-triggered scan queued locally")
+            except Exception as exc:
+                logger.error(f"Failed to queue protocol-triggered scan: {exc}")
+
+        root.after(500, queue_protocol_scan)
 
     def process_gui_tasks():
-        # Check for shutdown
         if shutdown_event.is_set():
-            logger.info("Shutdown signal received. stopping...")
+            logger.info("Shutdown signal received")
             worker.stop()
             tray.stop()
             root.quit()
             return
 
-        # Process GUI tasks
         try:
             while True:
-                # Non-blocking get
-                task = gui_task_queue.get_nowait()
-                func, result_queue = task
+                func, result_queue = gui_task_queue.get_nowait()
                 try:
-                    res = func()
-                    result_queue.put(res)
-                except Exception as e:
-                    logger.error(f"GUI Task Failed: {e}")
-                    result_queue.put(None)
+                    result = func()
+                    result_queue.put(("ok", result))
+                except Exception as exc:
+                    logger.exception("GUI task failed")
+                    result_queue.put(("error", exc))
                 finally:
                     gui_task_queue.task_done()
         except queue.Empty:
             pass
-        
-        # Schedule next check
+
         root.after(100, process_gui_tasks)
 
-    # Start polling
     root.after(100, process_gui_tasks)
-    
-    # Run Mainloop
+
     try:
         root.mainloop()
     except KeyboardInterrupt:
         shutdown_event.set()
+    finally:
+        shutdown_event.set()
+        worker.stop()
+        tray.stop()
+        server_thread.join(timeout=5)
+        worker.join(timeout=5)
+        logger.info("Application stopped")
 
-    # Cleanup
-    logger.info("Application Stopped.")
-    sys.exit(0)
+    return 0
 
-if __name__ == '__main__':
-    main()
+
+if __name__ == "__main__":
+    sys.exit(main())

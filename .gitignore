@@ -21,6 +21,7 @@ pgadmin_data/
 scanner_app/
 sidebar/
 users/
+.vscode
 
 # Ignore celery-related files
 celerybeat-schedule
