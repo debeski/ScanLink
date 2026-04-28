@@ -29,8 +29,10 @@ class WorkerTests(unittest.TestCase):
 
     def test_process_job_marks_completion_and_stores_result(self):
         worker = ScanWorker(queue.Queue())
-        worker.scanner_manager = FakeScannerManager()
-        worker._execute_gui = lambda func, timeout=None: func()
+        worker._run_scan_subprocess = lambda job_id, on_progress: FakeScannerManager().scan_to_pdf(
+            job_id,
+            progress_callback=on_progress,
+        )
 
         queued = worker.submit_job(doc_id="abc")
         queued_job_id = worker.scan_queue.get_nowait()

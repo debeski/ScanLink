@@ -14,7 +14,26 @@ except ImportError:
     PilImage = None
 
 # Constants
-APP_VERSION = "0.5.0"
+def get_base_dir():
+    return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+
+
+BASE_DIR = get_base_dir()
+VERSION_FILE = os.path.join(BASE_DIR, "VERSION")
+
+
+def load_app_version():
+    try:
+        with open(VERSION_FILE, "r", encoding="utf-8") as version_file:
+            version = version_file.read().strip()
+            if version:
+                return version
+    except OSError:
+        pass
+    return "0.5.0"
+
+
+APP_VERSION = load_app_version()
 LOCALAPPDATA = os.getenv('LOCALAPPDATA', os.path.expanduser('~\\AppData\\Local'))
 APP_DIR = os.path.abspath(os.path.join(LOCALAPPDATA, 'ScanLink'))
 LOG_FILE = os.path.join(APP_DIR, 'scanner.log')
@@ -26,6 +45,7 @@ DEFAULT_JOB_TTL_SECONDS = 900
 DEFAULT_RESULT_TTL_SECONDS = 300
 DEFAULT_SCAN_TIMEOUT_SECONDS = 600
 DEFAULT_GUI_TASK_TIMEOUT_SECONDS = 900
+DEFAULT_SCAN_IDLE_TIMEOUT_SECONDS = 45
 
 # Ensure app directory exists
 os.makedirs(APP_DIR, exist_ok=True)
@@ -97,11 +117,13 @@ def load_config():
     defaults = {
         "resolution": 240,
         "default_scanner": None,
+        "show_scanner_ui": False,
         "cors_origins": ["*"],
         "job_ttl_seconds": DEFAULT_JOB_TTL_SECONDS,
         "result_ttl_seconds": DEFAULT_RESULT_TTL_SECONDS,
         "scan_timeout_seconds": DEFAULT_SCAN_TIMEOUT_SECONDS,
         "gui_task_timeout_seconds": DEFAULT_GUI_TASK_TIMEOUT_SECONDS,
+        "scan_idle_timeout_seconds": DEFAULT_SCAN_IDLE_TIMEOUT_SECONDS,
     }
     try:
         if os.path.exists(CONFIG_FILE):

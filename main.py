@@ -1,4 +1,5 @@
 import argparse
+import multiprocessing
 import queue
 import sys
 import threading
@@ -11,6 +12,7 @@ from protocol_handler import (
     is_existing_instance_running,
     parse_protocol_url,
 )
+from scan_runtime import run_scan_job
 from server import run_server
 from tray import TrayApp
 from utils import APP_VERSION, ensure_ssl_certificates, get_logger, is_ssl_available, setup_logging
@@ -18,17 +20,22 @@ from worker import ScanWorker, set_status_callback
 
 
 def main():
+    multiprocessing.freeze_support()
     logger = setup_logging()
     logger.info("ScanLink v%s starting", APP_VERSION)
 
     parser = argparse.ArgumentParser(description="ScanLink - Scanner Bridge for Web Apps")
     parser.add_argument("url", nargs="?", help="Protocol URL (scanlink://...)")
+    parser.add_argument("--scan-worker-dir", help=argparse.SUPPRESS)
     parser.add_argument(
         "--generate-ssl",
         action="store_true",
         help="Generate trusted localhost SSL certificates and exit",
     )
     args, unknown = parser.parse_known_args()
+
+    if args.scan_worker_dir:
+        return run_scan_job(args.scan_worker_dir)
 
     if args.generate_ssl:
         logger.info("Generating SSL certificates...")
@@ -56,6 +63,12 @@ def main():
     else:
         logger.info("Trusted localhost HTTPS certificates not found; HTTP loopback listener will remain available")
 
+    root = tk.Tk()
+    root.withdraw()
+    root.update()
+    init_gui(root)
+    logger.info("GUI root initialized with window handle %s", root.winfo_id())
+
     shutdown_event = threading.Event()
     gui_task_queue = queue.Queue()
     worker = ScanWorker(gui_task_queue)
@@ -79,10 +92,6 @@ def main():
         name="TrayThread",
     )
     tray_thread.start()
-
-    root = tk.Tk()
-    root.withdraw()
-    init_gui(root)
 
     if protocol_command and protocol_command.get("action") == "scan":
         def queue_protocol_scan():

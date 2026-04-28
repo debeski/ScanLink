@@ -1,4 +1,11 @@
+import io
+import json
+import os
 import queue
+import shutil
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -43,6 +50,13 @@ class GuiTaskTimeoutError(Exception):
     pass
 
 
+class ScanProcessTimeoutError(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 class ScanWorker(threading.Thread):
     def __init__(self, gui_task_queue):
         super().__init__(daemon=True)
@@ -53,12 +67,15 @@ class ScanWorker(threading.Thread):
         self.scanner_manager = ScannerManager()
         self.running = True
         self.current_job_id = None
+        self.active_scan_process = None
+        self.active_scan_process_lock = threading.Lock()
 
         config = load_config()
         self.job_ttl_seconds = int(config.get("job_ttl_seconds", 900))
         self.result_ttl_seconds = int(config.get("result_ttl_seconds", 300))
         self.scan_timeout_seconds = int(config.get("scan_timeout_seconds", 600))
         self.gui_task_timeout_seconds = int(config.get("gui_task_timeout_seconds", 900))
+        self.scan_idle_timeout_seconds = int(config.get("scan_idle_timeout_seconds", 45))
 
     def submit_job(self, doc_id=None, callback_url=None, metadata=None, source="api"):
         with self.jobs_lock:
@@ -142,6 +159,7 @@ class ScanWorker(threading.Thread):
 
     def stop(self):
         self.running = False
+        self._stop_active_scan_process()
         self.scan_queue.put(None)
 
     def _process_job(self, job_id):
@@ -164,14 +182,7 @@ class ScanWorker(threading.Thread):
                 self._update_job(job_id, **updates)
                 emit_status(job_id, status, **data)
 
-            pdf_buffer = self._execute_gui(
-                lambda: self.scanner_manager.scan_to_pdf(
-                    job_id,
-                    progress_callback=on_progress,
-                    deadline=scan_deadline,
-                ),
-                timeout=self.gui_task_timeout_seconds,
-            )
+            pdf_buffer = self._run_scan_subprocess(job_id, on_progress)
             pdf_bytes = pdf_buffer.getvalue()
             pdf_buffer.close()
 
@@ -192,6 +203,13 @@ class ScanWorker(threading.Thread):
                 code="scan_timeout",
                 message="The scan helper did not finish within the allowed time.",
                 status="timed_out",
+            )
+        except ScanProcessTimeoutError as exc:
+            self._fail_job(
+                job_id,
+                code=exc.code,
+                message=exc.message,
+                status="timed_out" if exc.code.endswith("timeout") else "failed",
             )
         except ScanError as exc:
             self._fail_job(job_id, code=exc.code, message=exc.message, status=exc.status)
@@ -229,6 +247,138 @@ class ScanWorker(threading.Thread):
         if outcome == "error":
             raise payload
         return payload
+
+    def run_gui_task(self, func, timeout=30):
+        return self._execute_gui(func, timeout=timeout)
+
+    def _run_scan_subprocess(self, job_id, on_progress):
+        work_dir = tempfile.mkdtemp(prefix="scanlink-job-")
+        state_path = os.path.join(work_dir, "state.json")
+        result_path = os.path.join(work_dir, "result.pdf")
+        request_path = os.path.join(work_dir, "request.json")
+        started_at = time.monotonic()
+        last_progress_at = started_at
+        last_state_signature = None
+        last_state_status = None
+
+        request_payload = {
+            "job_id": job_id,
+            "scan_timeout_seconds": self.scan_timeout_seconds,
+        }
+        with open(request_path, "w", encoding="utf-8") as request_file:
+            json.dump(request_payload, request_file, indent=2)
+
+        process = None
+        try:
+            process = subprocess.Popen(
+                self._build_scan_subprocess_command(work_dir),
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+            )
+            with self.active_scan_process_lock:
+                self.active_scan_process = process
+
+            while True:
+                state = self._read_state_file(state_path)
+                if state:
+                    signature = json.dumps(
+                        [
+                            state.get("status"),
+                            state.get("page_count", 0),
+                            (state.get("error") or {}).get("code"),
+                        ],
+                        sort_keys=True,
+                    )
+                    if signature != last_state_signature:
+                        last_state_signature = signature
+                        last_progress_at = time.monotonic()
+                        last_state_status = state.get("status")
+                        progress_payload = {}
+                        if "page_count" in state:
+                            progress_payload["page_count"] = state["page_count"]
+                        if "error" in state:
+                            progress_payload["error"] = state["error"]
+                        on_progress(state["status"], **progress_payload)
+
+                return_code = process.poll()
+                if return_code is not None:
+                    break
+
+                now = time.monotonic()
+                if self.gui_task_timeout_seconds > 0 and now - started_at > self.gui_task_timeout_seconds:
+                    self._terminate_scan_process(process)
+                    raise ScanProcessTimeoutError(
+                        "scan_timeout",
+                        "The scan helper did not finish within the allowed time.",
+                    )
+                if (
+                    self.scan_idle_timeout_seconds > 0
+                    and last_state_status in {"acquiring", "page_scanned"}
+                    and now - last_progress_at > self.scan_idle_timeout_seconds
+                ):
+                    self._terminate_scan_process(process)
+                    raise ScanProcessTimeoutError(
+                        "scan_idle_timeout",
+                        "The scanner did not make progress and was reset.",
+                    )
+
+                time.sleep(0.25)
+
+            final_state = self._read_state_file(state_path)
+            if process.returncode == 0 and os.path.exists(result_path):
+                with open(result_path, "rb") as result_file:
+                    return io.BytesIO(result_file.read())
+
+            if final_state and final_state.get("error"):
+                error = final_state["error"]
+                raise ScanError(
+                    error.get("code", "scan_failed"),
+                    error.get("message", "The scan could not be completed."),
+                    status=final_state.get("status", "failed"),
+                )
+
+            raise ScanError(
+                "scan_worker_crashed",
+                f"Scan worker exited unexpectedly with code {process.returncode}.",
+            )
+        finally:
+            with self.active_scan_process_lock:
+                if self.active_scan_process is process:
+                    self.active_scan_process = None
+            if process and process.poll() is None:
+                self._terminate_scan_process(process)
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    def _build_scan_subprocess_command(self, work_dir):
+        if getattr(sys, "frozen", False):
+            return [sys.executable, "--scan-worker-dir", work_dir]
+        return [sys.executable, os.path.abspath("main.py"), "--scan-worker-dir", work_dir]
+
+    def _read_state_file(self, state_path):
+        if not os.path.exists(state_path):
+            return None
+        try:
+            with open(state_path, "r", encoding="utf-8") as state_file:
+                return json.load(state_file)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def _terminate_scan_process(self, process):
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except Exception:
+            try:
+                process.kill()
+                process.wait(timeout=5)
+            except Exception:
+                pass
+
+    def _stop_active_scan_process(self):
+        with self.active_scan_process_lock:
+            process = self.active_scan_process
+        if process and process.poll() is None:
+            logger.warning("Stopping active scan subprocess during worker shutdown")
+            self._terminate_scan_process(process)
 
     def _send_callback(self, job, pdf_bytes):
         callback_url = job.get("callback_url")
