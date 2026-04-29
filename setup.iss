@@ -4,27 +4,37 @@
 #define MyAppName "ScanLink"
 #define MyAppVersion StringChange(StringChange(FileRead("VERSION"), "\n", ""), "\r", "")
 #define MyAppPublisher "Institute Document Management System"
-#define MyBuildExeName "ScanLink-{#MyAppVersion}.exe"
+#ifndef MyAppArch
+#define MyAppArch "x64"
+#endif
+#if MyAppArch != "x64" && MyAppArch != "x86"
+#error MyAppArch must be "x64" or "x86"
+#endif
+#define MyBuildExeName "ScanLink_" + MyAppVersion + "_" + MyAppArch + ".exe"
 #define MyAppExeName "ScanLink.exe"
-#define MyAppURL "https://github.com/your-repo/scanlink"
+#define MyAppURL "https://github.com/DEVGREIDC/scanlink"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application.
 AppId={{12345678-1234-1234-1234-1234567890AB}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+AppVerName={#MyAppName} {#MyAppVersion} ({#MyAppArch})
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=.
-OutputBaseFilename=ScanLinkSetup
+OutputBaseFilename=ScanLinkSetup_{#MyAppVersion}_{#MyAppArch}
 SetupIconFile=app_icon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\app_icon.ico
+#if MyAppArch == "x64"
+ArchitecturesAllowed=x64compatible
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
