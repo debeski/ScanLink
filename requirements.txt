@@ -1,13 +1,7 @@
 # ScanLink Dependencies
-# v0.4.0 - Added WebSocket support and HTTP client
 
 # Web Framework
 Flask==3.0.0
-flask-cors==4.0.0
-flask-socketio>=5.3.6
-
-# WebSocket Engine (threading mode - no eventlet/gevent needed for simple use)
-python-socketio>=5.10.0
 
 # Image Processing
 Pillow>=12.1.0

@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -7,6 +8,15 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION_FILE = os.path.join(ROOT_DIR, "VERSION")
 DATA_SEPARATOR = ";" if os.name == "nt" else ":"
 ARCH_CHOICES = ("both", "x64", "x86", "current")
+REQUIRED_BUILD_MODULES = (
+    ("PyInstaller", "pyinstaller"),
+    ("flask", "Flask"),
+    ("PIL", "Pillow"),
+    ("reportlab", "reportlab"),
+    ("pystray", "pystray"),
+    ("requests", "requests"),
+    ("twain", "pytwain"),
+)
 
 
 def read_version():
@@ -54,6 +64,22 @@ def python_arch(python_executable):
     ]
     result = subprocess.run(command, capture_output=True, text=True, check=True)
     return result.stdout.strip()
+
+
+def missing_build_modules(python_executable):
+    script = (
+        "import importlib.util, json; "
+        f"modules = {REQUIRED_BUILD_MODULES!r}; "
+        "print(json.dumps([dist for module, dist in modules "
+        "if importlib.util.find_spec(module) is None]))"
+    )
+    result = subprocess.run(
+        [python_executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(result.stdout)
 
 
 def parse_args():
@@ -117,23 +143,12 @@ def build_pyinstaller_args(build_name):
         "--hidden-import=PIL.ImageDraw",
         "--hidden-import=protocol_handler",
         "--hidden-import=flask",
-        "--hidden-import=flask_cors",
-        "--hidden-import=flask_socketio",
-        "--hidden-import=socketio",
-        "--hidden-import=engineio",
-        "--hidden-import=engineio.async_drivers.threading",
         "--hidden-import=werkzeug",
         "--hidden-import=jinja2",
         "--hidden-import=itsdangerous",
         "--hidden-import=click",
         "--hidden-import=blinker",
-        "--hidden-import=simple_websocket",
-        "--hidden-import=wsproto",
         "--collect-all=flask",
-        "--collect-all=flask_cors",
-        "--collect-all=flask_socketio",
-        "--collect-all=socketio",
-        "--collect-all=engineio",
         "--collect-all=werkzeug",
         "--collect-all=jinja2",
     ]
@@ -197,6 +212,13 @@ def main():
             raise SystemExit(
                 f"Cannot build {arch}: Python executable '{python_executable}' is {detected_arch}."
             )
+        missing_modules = missing_build_modules(python_executable)
+        if missing_modules:
+            missing_list = ", ".join(missing_modules)
+            raise SystemExit(
+                f"Cannot build {arch}: missing packages in '{python_executable}': {missing_list}.\n"
+                f"Install them with: {python_executable} -m pip install -r requirements.txt"
+            )
         python_by_arch[arch] = python_executable
 
     for arch in requested_arches:
@@ -205,7 +227,7 @@ def main():
     print("Next steps:")
     print("1. Compile setup.iss with Inno Setup or update it for the new x86/x64 executable names")
     print("2. Run the installer on a Windows machine")
-    print("3. Copy static/scanlink.js to your Django project's static folder if you are not using the shared Microsys helper")
+    print("3. Use the installed static/scanlink.js client or the shared Microsys helper in your Django project")
 
 
 if __name__ == "__main__":
