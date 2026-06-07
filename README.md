@@ -81,6 +81,34 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 
 ---
 
+## 👩‍💻 Developer Integration
+
+ScanLink exposes a local REST API for browser apps:
+
+- `GET http://127.0.0.1:5000/health`
+- `POST http://127.0.0.1:5000/scan`
+- `GET http://127.0.0.1:5000/scan/<job_id>`
+- `GET http://127.0.0.1:5000/scan/<job_id>/result`
+
+HTTPS is also available at `https://127.0.0.1:5443` when trusted localhost certificates exist.
+
+Minimal browser flow:
+
+```js
+const scanLink = new ScanLink();
+const job = await scanLink.startScan({ docId: "DOC-123" });
+const pdfBlob = await scanLink.waitForResult(job.job_id);
+```
+
+Developer docs:
+
+- [Developer Guide](docs/developer-guide.md): frontend flow, deep links, callbacks, and operational notes.
+- [API Reference](docs/api.md): endpoint contracts, status payloads, and error codes.
+- [Architecture](docs/architecture.md): how the app is wired internally.
+- [Building and Release](docs/building.md): local development, PyInstaller builds, and installer packaging.
+
+---
+
 ## 📜 Version History
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full release history.

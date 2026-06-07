@@ -1,0 +1,38 @@
+**GOVERNMENT PROPERTY - NO PUBLIC LICENSE**
+
+**OFFICIAL GOVERNMENT MATERIAL**
+
+This repository and all associated materials are the property of the Libyan Government. All content herein is classified as Government Property and is not released under any public license.
+
+**NO PERMISSION GRANTED:**
+No person or entity is permitted to use, copy, modify, distribute, or reproduce any portion of this repository
+
+Commercial use is strictly prohibited
+
+Non-commercial use is strictly prohibited
+
+Any form of distribution or publication is strictly prohibited
+
+Reverse engineering or decompilation is strictly prohibited
+
+**THIRD-PARTY COMPONENTS NOTICE:**
+While this repository references the following open-source components in documentation, this does not constitute a distribution or endorsement of those components for use with this government system:
+
+Docker, Linux, Python, PostgreSQL, Redis, pgAdmin, Nginx, SOPS, age/age-keygen
+
+Django, gunicorn, django-crispy-forms, django-tables2, django-filter
+
+django-celery-beat, crispy-bootstrap5, psycopg2-binary, pandas
+
+NumPy, openpyxl, tablib, Pillow, Celery, redis-py, plotly, Babel, setuptools
+
+**WARNING:**
+Unauthorized access, use, reproduction, or distribution of this government property may result in civil and criminal penalties, including imprisonment and fines.
+
+This repository is made available on GitHub for INFORMATIONAL PURPOSES ONLY to demonstrate government capabilities. No license of any kind is granted.
+
+**FOR AUTHORIZED GOVERNMENT PERSONNEL ONLY**
+Access to and use of this system is restricted to authorized U.S. Government personnel with proper security clearance and need-to-know authorization.
+
+---
+*Note: This license covers the application code. All third-party components remain under their original open-source licenses. Users should verify license compatibility for their specific use case, particularly noting the LGPL requirements for psycopg2-binary.*
