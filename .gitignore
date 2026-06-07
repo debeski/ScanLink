@@ -33,6 +33,7 @@ celerybeat-schedule-wal
 **/.key
 ScanLinkSetup.exe
 ScanLinkSetup_*.exe
+ScanLink-*.spec
 ScanLink_*.spec
 dist
 build

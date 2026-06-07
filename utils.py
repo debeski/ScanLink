@@ -118,6 +118,7 @@ def load_config():
         "resolution": 240,
         "default_scanner": None,
         "show_scanner_ui": False,
+        "paper_protection": False,
         "cors_origins": ["*"],
         "job_ttl_seconds": DEFAULT_JOB_TTL_SECONDS,
         "result_ttl_seconds": DEFAULT_RESULT_TTL_SECONDS,

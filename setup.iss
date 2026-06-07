@@ -10,7 +10,7 @@
 #expr FileClose(VersionFileHandle)
 #define MyAppPublisher "Institute Document Management System"
 #ifndef MyAppArch
-#define MyAppArch "x64"
+#define MyAppArch "x86"
 #endif
 #if MyAppArch != "x64" && MyAppArch != "x86"
 #error MyAppArch must be "x64" or "x86"

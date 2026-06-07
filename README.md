@@ -83,12 +83,4 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 
 ## 📜 Version History
 
-| Version | Changes |
-|---------|---------|
-| **v0.1.0** | • Initial release<br>• Basic TWAIN scanning support<br>• Single-page PDF generation<br>• Localhost API endpoint |
-| **v0.1.1** | • Added multi-page support<br>• Implemented system tray icon<br>• Added default scanner memory<br>• startup on boot option |
-| **v0.1.2** | • Added "Select Scanner" GUI dialog<br>• Improved error handling for busy scanners<br>• Added logging system |
-| **v0.2.0** | • **Major Optimization:** Implemented image compression (JPEG 85%)<br>• Added resolution controls (160/200/240/300 DPI)<br>• Reduced file size by 80% (avg page < 500KB)<br>• Added Inno Setup installer script |
-| **v0.3.0** | • **Refactoring:** Modularized codebase (server, scanner, worker, tray)<br>• **Queue System:** Added job queue for reliable scanning<br>• **UI Improvements:** Added "Test Scan" and active status in tray<br>• **Memory:** Optimized image handling with in-memory DIB processing |
-| **v0.4.0** | • **HTTPS/SSL:** Auto-generates trusted localhost certificates via mkcert<br>• **Deep Links:** `scanlink://` protocol for instant browser-triggered scans<br>• **WebSocket:** Real-time scan status streaming (queued → page_scanned → completed)<br>• **Django Integration:** Added `scanlink.js` client library<br>• **Startup Fix:** Registry-based startup prevents double-launch bug<br>• **Callback URLs:** POST scan results directly to Django endpoints |
-| **v0.7.0** | • Removed deprecated Socket.IO/WebSocket runtime dependencies<br>• Standardized ScanLink client behavior on REST health checks, status polling, and result download<br>• Installer now includes the standalone `static/scanlink.js` helper |
+See [`CHANGELOG.md`](CHANGELOG.md) for the full release history.

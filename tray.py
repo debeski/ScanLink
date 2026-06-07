@@ -190,6 +190,13 @@ class TrayApp:
             if self.icon:
                 self.icon.update_menu()
 
+        def on_paper_protection_toggle(icon, item):
+            config = load_config()
+            config["paper_protection"] = not bool(config.get("paper_protection", False))
+            save_config(config)
+            if self.icon:
+                self.icon.update_menu()
+
         def on_startup_toggle(icon, item):
             set_startup_enabled(not is_startup_enabled())
             if self.icon:
@@ -227,6 +234,12 @@ class TrayApp:
                 "Show Scanner UI",
                 on_scanner_ui_toggle,
                 checked=lambda item: bool(load_config().get("show_scanner_ui", False)),
+                enabled=lambda item: not self.worker.is_busy(),
+            ),
+            MenuItem(
+                "Paper Protection",
+                on_paper_protection_toggle,
+                checked=lambda item: bool(load_config().get("paper_protection", False)),
                 enabled=lambda item: not self.worker.is_busy(),
             ),
             MenuItem("Clear Default Scanner", clear_default_scanner, enabled=lambda item: not self.worker.is_busy()),

@@ -519,11 +519,19 @@ class ScannerManager:
         if show_ui or not twain:
             return
 
+        # CAP_PAPERPROTECTION (0x1099) is a TWAIN 2.x standard capability.
+        # At driver default (enabled, high sensitivity) it generates frequent false
+        # "paper stuck" errors during batch silent scanning.  PaperStream Capture
+        # disables it for programmatic use; we mirror that behaviour.
+        _cap_paper_protection = getattr(twain, "CAP_PAPERPROTECTION", 0x1099)
+        paper_protection = bool(config.get("paper_protection", False))
+
         silent_capabilities = [
             ("CAP_FEEDERENABLED", twain.CAP_FEEDERENABLED, twain.TWTY_BOOL, True),
             ("CAP_AUTOFEED", twain.CAP_AUTOFEED, twain.TWTY_BOOL, True),
             ("CAP_INDICATORS", twain.CAP_INDICATORS, twain.TWTY_BOOL, False),
             ("CAP_XFERCOUNT", twain.CAP_XFERCOUNT, twain.TWTY_INT16, -1),
+            ("CAP_PAPERPROTECTION", _cap_paper_protection, twain.TWTY_BOOL, paper_protection),
         ]
 
         for label, capability, type_id, value in silent_capabilities:

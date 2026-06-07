@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import venv
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION_FILE = os.path.join(ROOT_DIR, "VERSION")
@@ -50,6 +51,39 @@ Output:
     dist/ScanLink_<version>_x64.exe
     dist/ScanLink_<version>_x86.exe
 """
+
+
+REQUIREMENTS_FILE = os.path.join(ROOT_DIR, "requirements.txt")
+
+
+def venv_dir(arch):
+    return os.path.join(ROOT_DIR, f".venv-{arch}")
+
+
+def venv_python(arch):
+    return os.path.join(venv_dir(arch), "Scripts", "python.exe")
+
+
+def ensure_venv(arch, base_python):
+    venv_path = venv_dir(arch)
+    python_exe = venv_python(arch)
+
+    if not os.path.exists(python_exe):
+        print(f"Creating {arch} venv at {venv_path} ...")
+        subprocess.run([base_python, "-m", "venv", venv_path], check=True)
+        print(f"{arch} venv created.")
+
+    if os.path.exists(REQUIREMENTS_FILE):
+        print(f"Installing requirements into {arch} venv ...")
+        subprocess.run(
+            [python_exe, "-m", "pip", "install", "--quiet", "-r", REQUIREMENTS_FILE],
+            check=True,
+        )
+        print(f"{arch} requirements installed.")
+    else:
+        print(f"WARNING: {REQUIREMENTS_FILE} not found — skipping pip install.")
+
+    return python_exe
 
 
 def current_arch():
@@ -212,14 +246,15 @@ def main():
             raise SystemExit(
                 f"Cannot build {arch}: Python executable '{python_executable}' is {detected_arch}."
             )
-        missing_modules = missing_build_modules(python_executable)
+        venv_py = ensure_venv(arch, python_executable)
+        missing_modules = missing_build_modules(venv_py)
         if missing_modules:
             missing_list = ", ".join(missing_modules)
             raise SystemExit(
-                f"Cannot build {arch}: missing packages in '{python_executable}': {missing_list}.\n"
-                f"Install them with: {python_executable} -m pip install -r requirements.txt"
+                f"Cannot build {arch}: missing packages in venv: {missing_list}.\n"
+                f"Check that all entries are in requirements.txt."
             )
-        python_by_arch[arch] = python_executable
+        python_by_arch[arch] = venv_py
 
     for arch in requested_arches:
         build_arch(arch, python_by_arch[arch], dry_run=args.dry_run)
