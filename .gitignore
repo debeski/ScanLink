@@ -35,5 +35,6 @@ ScanLinkSetup.exe
 ScanLinkSetup_*.exe
 ScanLink-*.spec
 ScanLink_*.spec
+.venv-x86
 dist
 build
