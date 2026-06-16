@@ -132,6 +132,30 @@ The installer:
 7. Verify tray launch, `/health`, scanner selection, scan result download, protocol launch, and uninstall cleanup.
 8. Test both HTTP and HTTPS behavior when certificates are present.
 
+## Continuous Integration and Automated Releases
+
+GitHub Actions handles steps 3–5 automatically:
+
+- **`.github/workflows/ci.yml`** runs on every push/PR to `main` or `beta`: it
+  runs the unit tests (`python -m unittest discover -s tests`) and verifies that
+  both the x86 and x64 executable **and** installer build via `build_exe.py` and
+  `setup.iss`. Inno Setup is provisioned on the runner with `choco install
+  innosetup`; the 32/64-bit split comes from `actions/setup-python`'s
+  `architecture` matrix.
+- **`.github/workflows/release.yml`** runs on a pushed `v*` tag: it verifies the
+  tag equals the `VERSION` file, builds both installers, and publishes a GitHub
+  Release with notes from the matching `## vX.Y.Z` `CHANGELOG.md` section. No
+  secrets are required — it uses the built-in `GITHUB_TOKEN`.
+
+To cut a release: set `VERSION` to `X.Y.Z`, add the matching `## vX.Y.Z`
+`CHANGELOG.md` section, commit, then:
+
+```bash
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+```
+
+Steps 6–8 above (real scanner / install verification) remain manual.
+
 ## Manual Verification Commands
 
 Check health:

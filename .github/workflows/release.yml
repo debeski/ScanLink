@@ -1,0 +1,96 @@
+name: Release
+
+# Triggered by pushing a version tag, e.g.:
+#   git tag -a v0.7.1 -m "v0.7.1" && git push origin v0.7.1
+#
+# Pipeline:
+#   build (x64, x86) -> verify tag == VERSION, build the executable + Inno Setup
+#                       installer for each arch, upload the installers
+#   github-release   -> attach both installers, notes from the CHANGELOG section
+#
+# No registry credentials are needed: artifacts go to a GitHub Release using the
+# built-in GITHUB_TOKEN. See docs/building.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, x86]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches VERSION
+        shell: pwsh
+        run: |
+          $file = (Get-Content VERSION -Raw).Trim()
+          $tag  = "${{ github.ref_name }}" -replace '^v',''
+          Write-Host "tag=$tag  VERSION=$file"
+          if ($file -ne $tag) { Write-Error "Tag ($tag) != VERSION ($file). Bump VERSION before tagging."; exit 1 }
+
+      - name: Set up Python (${{ matrix.arch }})
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.arch }}
+
+      - name: Build executable (${{ matrix.arch }})
+        run: python build_exe.py --arch ${{ matrix.arch }}
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile installer (${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppArch=${{ matrix.arch }} setup.iss
+          $ver = (Get-Content VERSION -Raw).Trim()
+          if (!(Test-Path "ScanLinkSetup_${ver}_${{ matrix.arch }}.exe")) { throw "installer was not produced" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.arch }}
+          path: ScanLinkSetup_*_${{ matrix.arch }}.exe
+          if-no-files-found: error
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+
+      - name: Extract this version's CHANGELOG section
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v ver="$ver" '
+            $0 ~ ("^## v" ver "([^0-9.]|$)") { grab=1; next }
+            grab && /^## v/ { exit }
+            grab { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "Release ${GITHUB_REF_NAME}." > RELEASE_NOTES.md
+          fi
+          echo "---- release notes ----"; cat RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: release-files/*.exe
+          fail_on_unmatched_files: true
