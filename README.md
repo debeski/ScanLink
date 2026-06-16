@@ -6,8 +6,12 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 
 ## 🔐 Key Features
 
-- **🌐 Local Web API**  
-  Exposes a secure endpoint (`http://localhost:5000/scan`) to trigger scans from any web application.
+- **🔒 Secure HTTPS API**  
+  Exposes a secure endpoint (`https://localhost:5443/scan`) with auto-generated SSL certificates.
+- **🔗 Deep Link Support**  
+  Trigger scans directly from browser links using `scanlink://scan?docId=123`.
+- **📡 Polling-Friendly Status API**  
+  Track scan status, page count, completion, and errors through REST endpoints.
 - **📄 Instant PDF Generation**  
   Automatically converts physical documents into optimized, multi-page PDFs ready for upload.
 - **⚙️ Configurable Quality**  
@@ -28,12 +32,13 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 ## ⚙️ Technology Stack
 
 - **Python 3.10+**: Core logic and runtime.
-- **Flask**: Lightweight local web server for API endpoints.
+- **Flask**: Local REST API server for scan requests, status polling, and PDF retrieval.
 - **PyTwain**: Low-level interface for TWAIN driver communication.
 - **Pillow (PIL)**: Advanced image processing and compression.
 - **ReportLab**: Professional PDF generation engine.
 - **PyStray**: System tray icon and menu integration.
 - **Tkinter**: Native GUI dialogs for scanner selection.
+- **mkcert**: Auto-generates trusted localhost SSL certificates.
 - **PyInstaller**: Compilation into standalone Windows executable.
 - **Inno Setup**: Professional Windows installer generation.
 
@@ -64,20 +69,46 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 2. **Select Resolution:** Right-click the tray icon → **Resolution** → Choose your preferred quality (Default: 240 DPI).
 3. **Trigger Scan:**
    - Click the **"Scan"** button in your web application.
-   - Or send a POST request to `http://localhost:5000/scan`.
+   - Or send a POST request to `https://localhost:5443/scan`.
+   - Or use a deep link: `<a href="scanlink://scan?docId=123">Scan</a>`
 4. **Scanner Selection:**
    - The first time you scan, a dialog will ask you to select your scanner.
    - Check **"Set as default"** to skip this step in the future.
    - To change scanners later, right-click the tray icon → **Clear Default Scanner**.
+5. **Status Updates:**
+   - Poll the job status endpoint or use `static/scanlink.js` for status tracking.
+   - Microsys already ships the shared ScanLink helper.
+
+---
+
+## 👩‍💻 Developer Integration
+
+ScanLink exposes a local REST API for browser apps:
+
+- `GET http://127.0.0.1:5000/health`
+- `POST http://127.0.0.1:5000/scan`
+- `GET http://127.0.0.1:5000/scan/<job_id>`
+- `GET http://127.0.0.1:5000/scan/<job_id>/result`
+
+HTTPS is also available at `https://127.0.0.1:5443` when trusted localhost certificates exist.
+
+Minimal browser flow:
+
+```js
+const scanLink = new ScanLink();
+const job = await scanLink.startScan({ docId: "DOC-123" });
+const pdfBlob = await scanLink.waitForResult(job.job_id);
+```
+
+Developer docs:
+
+- [Developer Guide](docs/developer-guide.md): frontend flow, deep links, callbacks, and operational notes.
+- [API Reference](docs/api.md): endpoint contracts, status payloads, and error codes.
+- [Architecture](docs/architecture.md): how the app is wired internally.
+- [Building and Release](docs/building.md): local development, PyInstaller builds, and installer packaging.
 
 ---
 
 ## 📜 Version History
 
-| Version | Changes |
-|---------|---------|
-| **v0.1.0** | • Initial release<br>• Basic TWAIN scanning support<br>• Single-page PDF generation<br>• Localhost API endpoint |
-| **v0.1.1** | • Added multi-page support<br>• Implemented system tray icon<br>• Added default scanner memory<br>• startup on boot option |
-| **v0.1.2** | • Added "Select Scanner" GUI dialog<br>• Improved error handling for busy scanners<br>• Added logging system |
-| **v0.2.0** | • **Major Optimization:** Implemented image compression (JPEG 85%)<br>• Added resolution controls (160/200/240/300 DPI)<br>• Reduced file size by 80% (avg page < 500KB)<br>• Added Inno Setup installer script |
-| **v0.3.0** | • **Refactoring:** Modularized codebase (server, scanner, worker, tray)<br>• **Queue System:** Added job queue for reliable scanning<br>• **UI Improvements:** Added "Test Scan" and active status in tray<br>• **Memory:** Optimized image handling with in-memory DIB processing |
+See [`CHANGELOG.md`](CHANGELOG.md) for the full release history.

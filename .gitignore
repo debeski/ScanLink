@@ -21,6 +21,7 @@ pgadmin_data/
 scanner_app/
 sidebar/
 users/
+.vscode
 
 # Ignore celery-related files
 celerybeat-schedule
@@ -31,5 +32,9 @@ celerybeat-schedule-wal
 **/.env
 **/.key
 ScanLinkSetup.exe
+ScanLinkSetup_*.exe
+ScanLink-*.spec
+ScanLink_*.spec
+.venv-x86
 dist
 build
