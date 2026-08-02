@@ -15,7 +15,7 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 - **📄 Instant PDF Generation**  
   Automatically converts physical documents into optimized, multi-page PDFs ready for upload.
 - **⚙️ Configurable Quality**  
-  Adjustable resolution settings (160, 200, 240, 300 DPI) to balance quality and file size.
+  Adjustable source, side, color, and resolution settings to balance quality and file size.
 - **🗜️ Smart Compression**  
   Built-in JPEG compression ensures file sizes remain small (<500KB/page) without sacrificing readability.
 - **🔌 Plug-and-Play**  
@@ -25,7 +25,7 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 - **🛡️ Secure Isolation**  
   Restricted to localhost access only, ensuring no external network exposure.
 - **💾 Configuration Persistence**  
-  Remembers your default scanner and preferred resolution settings.
+  Remembers your default scanner and scan profile settings.
 
 ---
 
@@ -66,7 +66,7 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 ## 📖 How to Use
 
 1. **Start the App:** Ensure the ScanLink icon is visible in your system tray.
-2. **Select Resolution:** Right-click the tray icon → **Resolution** → Choose your preferred quality (Default: 240 DPI).
+2. **Confirm Scan Profile:** Right-click the tray icon and confirm the archive-safe defaults: **Source → ADF**, **Side → Front**, **Color → Color**, **Resolution → 200 DPI**, and **Paper Protection** unchecked.
 3. **Trigger Scan:**
    - Click the **"Scan"** button in your web application.
    - Or send a POST request to `https://localhost:5443/scan`.

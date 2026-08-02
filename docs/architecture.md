@@ -11,7 +11,7 @@ ScanLink is a Windows tray application that exposes a local browser API and isol
 | `worker.py` | Owns scan job state, enforces one active job, launches scan subprocesses, stores results, and sends callbacks. |
 | `scan_runtime.py` | Runs inside the child scan process. Reads job request files, calls the scanner, writes progress state and result PDF. |
 | `scanner.py` | TWAIN scanner manager. Lists sources, opens the selected scanner, acquires pages, and generates PDFs. |
-| `tray.py` | System tray icon and menu actions. Controls resolution, diagnostics, startup, scanner UI, paper protection, and quit. |
+| `tray.py` | System tray icon and menu actions. Controls source, side, color mode, resolution, diagnostics, startup, scanner UI, paper protection, and quit. |
 | `protocol_handler.py` | Parses `scanlink://` URLs and forwards protocol launches to an existing local instance. |
 | `utils.py` | Shared logging, config, version, SSL certificate, startup, and resource helpers. |
 | `gui/dialogs.py` | Tk dialogs for scanner selection and diagnostics output. |
@@ -116,7 +116,11 @@ Defaults are provided in `utils.load_config()`:
 
 ```json
 {
-  "resolution": 240,
+  "scan_profile_version": 1,
+  "resolution": 200,
+  "scan_source": "adf",
+  "scan_side": "front",
+  "color_mode": "color",
   "default_scanner": null,
   "show_scanner_ui": false,
   "paper_protection": false,
@@ -128,6 +132,10 @@ Defaults are provided in `utils.load_config()`:
   "scan_idle_timeout_seconds": 45
 }
 ```
+
+The default scan profile is tuned for archive uploads: ADF, front-only/simplex,
+200 DPI, color, and paper protection off. Older config files without
+`scan_profile_version` are migrated to those profile values when loaded.
 
 Logs are written to:
 

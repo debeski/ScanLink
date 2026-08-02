@@ -195,8 +195,9 @@ Downloading `/scan/<job_id>/result` consumes the stored PDF. A second download f
 - CORS defaults to `["*"]` in `%LOCALAPPDATA%\ScanLink\config.json`.
 - The first scan may show a scanner selection dialog.
 - If the user selects "Set as default scanner", later scans skip scanner selection.
-- Tray settings control resolution, scanner UI visibility, paper protection, startup, and diagnostics.
-- Silent scanning disables scanner UI by default and configures feeder/autofeed capabilities where supported.
+- Tray settings control source, side, color mode, resolution, scanner UI visibility, paper protection, startup, and diagnostics.
+- The default profile for archive uploads is ADF, front-only/simplex, 200 DPI, color, and paper protection off.
+- Silent scanning disables scanner UI by default and configures feeder/autofeed, duplex, pixel type, paper protection, transfer count, and indicators where supported.
 - Paper protection is disabled by default because some TWAIN drivers report false paper-stuck errors during batch scanning.
 
 ## Useful Links

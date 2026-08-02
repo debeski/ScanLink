@@ -2,6 +2,11 @@
 
 This file owns the release history for `ScanLink`.
 
+## v0.7.2
+
+- **Archive-Safe Scanner Profile Defaults**: Added persisted scan profile settings with legacy config migration to ADF source, front-only/simplex side mode, 200 DPI, color pixel type, and `CAP_PAPERPROTECTION=False` for scanner batches used by archive uploads.
+- **TWAIN Source And Side Controls**: Added tray menu controls for source (`adf`/`flatbed`), side (`front`/`front_back`), and color mode (`color`/`grayscale`/`black_white`), applying `CAP_FEEDERENABLED`, `CAP_AUTOFEED`, `CAP_DUPLEXENABLED`, `ICAP_PIXELTYPE`, and optional `ICAP_BITDEPTH` before acquisition.
+
 ## v0.7.1
 
 - **Paper Protection Fix**: Disabled the TWAIN `CAP_PAPERPROTECTION` capability by default during silent scanning. The scanner driver's default (high-sensitivity) setting was generating frequent false "paper stuck" errors during batch scanning, forcing operators to remove the paper stack and retry. Behaviour now matches PaperStream Capture.

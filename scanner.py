@@ -17,7 +17,15 @@ except ImportError:
     A4 = (595.2756, 841.8898)
     canvas = None
 
-from utils import get_logger, load_config, save_config
+from utils import (
+    DEFAULT_COLOR_MODE,
+    DEFAULT_RESOLUTION,
+    DEFAULT_SCAN_SIDE,
+    DEFAULT_SCAN_SOURCE,
+    get_logger,
+    load_config,
+    save_config,
+)
 
 try:
     import twain
@@ -69,8 +77,12 @@ class ScannerManager:
         diagnostics = {
             "twain_available": self.is_available(),
             "default_scanner": config.get("default_scanner"),
-            "resolution": config.get("resolution", 240),
+            "resolution": config.get("resolution", DEFAULT_RESOLUTION),
+            "scan_source": config.get("scan_source", DEFAULT_SCAN_SOURCE),
+            "scan_side": config.get("scan_side", DEFAULT_SCAN_SIDE),
+            "color_mode": config.get("color_mode", DEFAULT_COLOR_MODE),
             "show_scanner_ui": bool(config.get("show_scanner_ui", False)),
+            "paper_protection": bool(config.get("paper_protection", False)),
             "sources": [],
         }
 
@@ -509,37 +521,122 @@ class ScannerManager:
 
     def _configure_source(self, source, config, show_ui):
         try:
-            resolution = float(config.get("resolution", 240))
+            resolution = float(config.get("resolution", DEFAULT_RESOLUTION))
             source.set_capability(twain.ICAP_XRESOLUTION, twain.TWTY_FIX32, resolution)
             source.set_capability(twain.ICAP_YRESOLUTION, twain.TWTY_FIX32, resolution)
             logger.info(f"Resolution set to {resolution}")
         except Exception as exc:
             logger.warning(f"Failed to set resolution: {exc}")
 
+        self._configure_scan_source(source, config)
+        self._configure_scan_side(source, config)
+        self._configure_color_mode(source, config)
+        self._configure_paper_protection(source, config)
+
         if show_ui or not twain:
             return
 
-        # CAP_PAPERPROTECTION (0x1099) is a TWAIN 2.x standard capability.
-        # At driver default (enabled, high sensitivity) it generates frequent false
-        # "paper stuck" errors during batch silent scanning.  PaperStream Capture
-        # disables it for programmatic use; we mirror that behaviour.
-        _cap_paper_protection = getattr(twain, "CAP_PAPERPROTECTION", 0x1099)
-        paper_protection = bool(config.get("paper_protection", False))
-
         silent_capabilities = [
-            ("CAP_FEEDERENABLED", twain.CAP_FEEDERENABLED, twain.TWTY_BOOL, True),
-            ("CAP_AUTOFEED", twain.CAP_AUTOFEED, twain.TWTY_BOOL, True),
             ("CAP_INDICATORS", twain.CAP_INDICATORS, twain.TWTY_BOOL, False),
             ("CAP_XFERCOUNT", twain.CAP_XFERCOUNT, twain.TWTY_INT16, -1),
-            ("CAP_PAPERPROTECTION", _cap_paper_protection, twain.TWTY_BOOL, paper_protection),
         ]
 
         for label, capability, type_id, value in silent_capabilities:
-            try:
-                source.set_capability(capability, type_id, value)
-                logger.info("Configured %s=%s for silent scan", label, value)
-            except Exception as exc:
-                logger.warning("Could not configure %s for silent scan: %s", label, exc)
+            self._set_capability(source, label, capability, type_id, value, "silent scan")
+
+    def _configure_scan_source(self, source, config):
+        scan_source = config.get("scan_source", DEFAULT_SCAN_SOURCE)
+        use_adf = scan_source != "flatbed"
+        self._set_capability(
+            source,
+            "CAP_FEEDERENABLED",
+            getattr(twain, "CAP_FEEDERENABLED", None),
+            twain.TWTY_BOOL,
+            use_adf,
+            "scan source",
+        )
+        self._set_capability(
+            source,
+            "CAP_AUTOFEED",
+            getattr(twain, "CAP_AUTOFEED", None),
+            twain.TWTY_BOOL,
+            use_adf,
+            "scan source",
+        )
+        logger.info("Requested scan source: %s", "ADF" if use_adf else "flatbed")
+
+    def _configure_scan_side(self, source, config):
+        scan_side = config.get("scan_side", DEFAULT_SCAN_SIDE)
+        duplex_enabled = scan_side == "front_back"
+        self._set_capability(
+            source,
+            "CAP_DUPLEXENABLED",
+            getattr(twain, "CAP_DUPLEXENABLED", 0x1013),
+            twain.TWTY_BOOL,
+            duplex_enabled,
+            "scan side",
+        )
+        logger.info("Requested scan side: %s", "front and back" if duplex_enabled else "front")
+
+    def _configure_color_mode(self, source, config):
+        color_mode = config.get("color_mode", DEFAULT_COLOR_MODE)
+        pixel_type_values = {
+            "color": getattr(twain, "TWPT_RGB", 2),
+            "grayscale": getattr(twain, "TWPT_GRAY", 1),
+            "black_white": getattr(twain, "TWPT_BW", 0),
+        }
+        pixel_type = pixel_type_values.get(color_mode, pixel_type_values[DEFAULT_COLOR_MODE])
+        item_type = getattr(twain, "TWTY_UINT16", twain.TWTY_INT16)
+        self._set_capability(
+            source,
+            "ICAP_PIXELTYPE",
+            getattr(twain, "ICAP_PIXELTYPE", 0x0101),
+            item_type,
+            pixel_type,
+            "color mode",
+        )
+
+        bit_depth_values = {
+            "grayscale": 8,
+            "black_white": 1,
+        }
+        if color_mode in bit_depth_values:
+            self._set_capability(
+                source,
+                "ICAP_BITDEPTH",
+                getattr(twain, "ICAP_BITDEPTH", 0x0112),
+                item_type,
+                bit_depth_values[color_mode],
+                "color mode",
+            )
+
+        logger.info("Requested color mode: %s", color_mode)
+
+    def _configure_paper_protection(self, source, config):
+        # CAP_PAPERPROTECTION (0x1099) is a TWAIN 2.x standard capability.
+        # Driver defaults can be high sensitivity, so ScanLink owns it explicitly.
+        paper_protection = bool(config.get("paper_protection", False))
+        self._set_capability(
+            source,
+            "CAP_PAPERPROTECTION",
+            getattr(twain, "CAP_PAPERPROTECTION", 0x1099),
+            twain.TWTY_BOOL,
+            paper_protection,
+            "paper protection",
+        )
+
+    def _set_capability(self, source, label, capability, type_id, value, context):
+        if capability is None:
+            logger.warning("TWAIN capability %s is unavailable; skipping %s configuration", label, context)
+            return False
+
+        try:
+            source.set_capability(capability, type_id, value)
+            logger.info("Configured %s=%s for %s", label, value, context)
+            return True
+        except Exception as exc:
+            logger.warning("Could not configure %s for %s: %s", label, context, exc)
+            return False
 
     def _check_deadline(self, deadline, code, message):
         if deadline and time.monotonic() > deadline:

@@ -35,7 +35,7 @@ Response:
 ```json
 {
   "status": "ok",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "busy": false,
   "http_enabled": true,
   "https_enabled": false,

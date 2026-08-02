@@ -4,7 +4,7 @@ import threading
 from flask import Flask, Response, jsonify, request, send_file
 from werkzeug.serving import make_server
 
-from utils import APP_VERSION, HTTP_HOST, HTTP_PORT, HTTPS_PORT, get_logger, get_ssl_context, load_config
+from utils import APP_ARCH, APP_VERSION, HTTP_HOST, HTTP_PORT, HTTPS_PORT, get_logger, get_ssl_context, load_config
 from worker import BusyError
 
 logger = get_logger()
@@ -58,6 +58,7 @@ def create_app(worker, shutdown_event, transport_state):
             {
                 "status": "ok",
                 "version": APP_VERSION,
+                "arch": APP_ARCH,
                 "busy": worker.is_busy(),
                 "http_enabled": transport_state.get("http_enabled", False),
                 "https_enabled": transport_state.get("https_enabled", False),

@@ -34,6 +34,9 @@ def load_app_version():
 
 
 APP_VERSION = load_app_version()
+# Architecture of THIS ScanLink build (process pointer size), so the Archive
+# update page can pick the matching x64/x86 installer to offer.
+APP_ARCH = "x64" if sys.maxsize > 2 ** 32 else "x86"
 LOCALAPPDATA = os.getenv('LOCALAPPDATA', os.path.expanduser('~\\AppData\\Local'))
 APP_DIR = os.path.abspath(os.path.join(LOCALAPPDATA, 'ScanLink'))
 LOG_FILE = os.path.join(APP_DIR, 'scanner.log')
@@ -46,6 +49,14 @@ DEFAULT_RESULT_TTL_SECONDS = 300
 DEFAULT_SCAN_TIMEOUT_SECONDS = 600
 DEFAULT_GUI_TASK_TIMEOUT_SECONDS = 900
 DEFAULT_SCAN_IDLE_TIMEOUT_SECONDS = 45
+DEFAULT_RESOLUTION = 200
+DEFAULT_SCAN_SOURCE = "adf"
+DEFAULT_SCAN_SIDE = "front"
+DEFAULT_COLOR_MODE = "color"
+SCAN_PROFILE_VERSION = 1
+SCAN_SOURCE_OPTIONS = ("adf", "flatbed")
+SCAN_SIDE_OPTIONS = ("front", "front_back")
+COLOR_MODE_OPTIONS = ("color", "grayscale", "black_white")
 
 # Ensure app directory exists
 os.makedirs(APP_DIR, exist_ok=True)
@@ -112,10 +123,39 @@ def setup_logging():
 def get_logger():
     return logging.getLogger('ScanLink')
 
+def _coerce_choice(value, allowed_values, default):
+    value = str(value or default).strip().lower()
+    return value if value in allowed_values else default
+
+def _apply_scan_profile_migration(config):
+    config["scan_profile_version"] = SCAN_PROFILE_VERSION
+    config["resolution"] = DEFAULT_RESOLUTION
+    config["scan_source"] = DEFAULT_SCAN_SOURCE
+    config["scan_side"] = DEFAULT_SCAN_SIDE
+    config["color_mode"] = DEFAULT_COLOR_MODE
+    config["paper_protection"] = False
+
+def _normalize_config(config):
+    config["scan_profile_version"] = int(config.get("scan_profile_version") or SCAN_PROFILE_VERSION)
+    config["scan_source"] = _coerce_choice(config.get("scan_source"), SCAN_SOURCE_OPTIONS, DEFAULT_SCAN_SOURCE)
+    config["scan_side"] = _coerce_choice(config.get("scan_side"), SCAN_SIDE_OPTIONS, DEFAULT_SCAN_SIDE)
+    config["color_mode"] = _coerce_choice(config.get("color_mode"), COLOR_MODE_OPTIONS, DEFAULT_COLOR_MODE)
+    config["paper_protection"] = bool(config.get("paper_protection", False))
+    try:
+        resolution = int(float(config.get("resolution", DEFAULT_RESOLUTION)))
+        config["resolution"] = resolution if resolution > 0 else DEFAULT_RESOLUTION
+    except (TypeError, ValueError):
+        config["resolution"] = DEFAULT_RESOLUTION
+    return config
+
 def load_config():
     """Loads configuration with defaults."""
     defaults = {
-        "resolution": 240,
+        "scan_profile_version": SCAN_PROFILE_VERSION,
+        "resolution": DEFAULT_RESOLUTION,
+        "scan_source": DEFAULT_SCAN_SOURCE,
+        "scan_side": DEFAULT_SCAN_SIDE,
+        "color_mode": DEFAULT_COLOR_MODE,
         "default_scanner": None,
         "show_scanner_ui": False,
         "paper_protection": False,
@@ -131,9 +171,11 @@ def load_config():
             with open(CONFIG_FILE, 'r') as f:
                 user_config = json.load(f)
                 defaults.update(user_config)
+                if "scan_profile_version" not in user_config:
+                    _apply_scan_profile_migration(defaults)
     except Exception as e:
         get_logger().error(f"Failed to load config: {e}")
-    return defaults
+    return _normalize_config(defaults)
 
 def save_config(config):
     """Saves configuration."""

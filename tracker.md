@@ -1,104 +1,69 @@
-# Project Tracker
+# Project Tracker (app-ScanLink) [Max 100 lines total]
 
-## Part 1: Project
-### Current Verified Snapshot and current project overview:
-Workspace: `/home/debeski/depy/projects/scanlink-app`.
-- Python desktop/tray app packaged with PyInstaller and Inno Setup.
-- Scanner integration is in `scanner.py` using `pytwain`/`twain.SourceManager`.
-- Scan jobs run through the same packaged executable as a subprocess via `worker.py` -> `--scan-worker-dir` -> `scan_runtime.py`.
+## Part 1: Project Related [Max 55 lines]
+### Current Verified Snapshot: [Max 5 lines]
+- Workspace: `/Users/debeski/Desktop/depy/app-ScanLink`.
+- Python Windows tray app packaged with PyInstaller/Inno Setup; TWAIN scan jobs run via `worker.py` -> child `main.py --scan-worker-dir` -> `scan_runtime.py`.
+- Scanner integration is `scanner.py` using `pytwain`/`twain.SourceManager`; generated PDFs are built with ReportLab from Pillow images.
+- Current version file: `0.7.2`; latest local git tag seen: `v0.7.1`.
 
-### Current Project Official Standards:
-- TWAIN scanning through `pytwain`; executable architecture is determined by the Python/PyInstaller environment used at build time.
+### Current Project Adopted Standards: [Max 5 lines]
+- TWAIN scanning through `pytwain`; executable architecture follows the Python/PyInstaller interpreter architecture.
+- Per-user config is `%LOCALAPPDATA%\ScanLink\config.json`; logs are `%LOCALAPPDATA%\ScanLink\scanner.log`.
+- Releases publish by version tags; check `git tag` before editing released changelog entries.
 
-### Standards' rules and policies:
-Follow explicit user instruction: re-read and maintain this tracker at the start of every turn and after meaningful project state changes.
+### Adopted Standards' rules and policies: [Max 5 lines]
+- Re-read and maintain this tracker at the start of every turn and after meaningful state changes.
+- Never delete files/directories; move obsolete paths under `./.xpose/` preserving relative paths.
+- Update root `CHANGELOG.md` immediately after implemented features/fixes/config fixes; update docs when code changes alter behavior/config/API/deployment.
 
-### Cross-Cutting Audits if any:
-- Packaging audit: `ScanLink.spec` has `target_arch=None`. `build_exe.py` now exposes architecture-aware build orchestration, but each target still follows the architecture of the Python executable used for that target.
+### Cross-Cutting Audits if any: [Max 3 lines]
+- Packaging audit: `build_exe.py` supports x86/x64 orchestration, but each build still requires matching-bitness Python.
+- Scanner profile audit: v0.7.2 owns TWAIN caps for ADF/flatbed, simplex/duplex, color mode, DPI, and paper protection; it still does not create/select named PaperStream profiles.
 
-### Current Project's Known Bugs:
-- Scanner detection issue reported by user: app works on Windows 11 with a modern Fujitsu/Ricoh fi-7420 over TWAIN, but fails to list an older Fujitsu fi-6230Z on the target client's Windows 11 PC. Third-party apps ScanAll PRO and PaperStream Capture can see and use the fi-6230Z on that upgraded Windows 11 installation.
-- Likely root cause to validate: target installation may expose only a 32-bit TWAIN data source for fi-6230Z, while ScanLink is likely built/running as a 64-bit process. A 64-bit TWAIN application cannot enumerate/load 32-bit TWAIN data sources.
-- Clarification from Ricoh/PFU references: scanner hardware is not inherently "32-bit" or "64-bit"; the installed TWAIN/PaperStream data source is. Ricoh FAQ says use PaperStream IP (TWAIN) for 32-bit applications and PaperStream IP (TWAIN x64) for 64-bit applications.
-- User field observation: target client PC does not have `C:\Windows\twain_64` at all. This strongly supports the conclusion that no 64-bit TWAIN source is installed for the scanner on that PC.
+### Current Project's Unsolved Known Bugs: [Max 5 lines]
+- Needs live Windows verification: v0.7.2 requests ADF/front/200/color/paper-off, but actual PaperStream IP driver compliance must be confirmed on client PCs.
+- Back-only side mode and blank-page discard remain unsupported; standard tray side modes are `front` and `front_back`.
+- Prior field issue: fi-6230Z may expose only 32-bit TWAIN source; target PC reportedly lacked `C:\Windows\twain_64`.
+- Archive-side context: `../project-archive/documents/forms.py` validates PDFs at 40 MB max.
 
-### Tasks:
-- Priority 1:
-  - [x] Inspect project build/runtime architecture and scanner integration path.
-  - [x] Determine whether the app currently ships/runs as 64-bit only or has a 32-bit option.
-  - [x] Identify practical remediation options for 32-bit-only TWAIN sources on Windows.
-  - [x] Update tracker with verified findings and recommended validation steps.
+### Incomplete Tasks: [Max 20 lines]
+- **Priority 1:**
+  - [ ] Live-test v0.7.2 on Windows with target PaperStream IP scanners and verify logs show accepted `CAP_DUPLEXENABLED=False`, ADF, 200 DPI, and color.
+  - [ ] Build and install v0.7.2 x64/x86 installers on a Windows test machine.
+- **Priority 2:**
+  - [ ] Design Archive-hosted ScanLink update path: server manifest/artifacts plus client localhost version check or ScanLink self-update endpoint.
+  - [ ] Add diagnostics logging of supported key TWAIN capabilities for selected source.
+  - [ ] Re-test Windows scanner behavior with PaperStream IP after changes.
+  - [ ] Test x86 build on fi-6230Z if only `twain_32` source exists.
+- **Completed Recently:**
+  - [x] Added v0.7.2 archive-safe defaults/migration: ADF, front-only, 200 DPI, color, paper protection off.
+  - [x] Added tray controls for Source, Side, Color, Resolution, and Paper Protection.
+  - [x] Applied TWAIN capability requests for feeder/autofeed, duplex enable, pixel type, optional bit depth, paper protection, indicators, and transfer count.
+  - [x] Updated `VERSION`, `CHANGELOG.md`, `README.md`, `docs/architecture.md`, `docs/developer-guide.md`, and `docs/api.md`.
+  - [x] Investigated ScanLink profile/settings behavior after archive file-size report on 2026-07-08.
 
-- Recommended follow-up:
-  - [ ] On a Windows machine, verify the built `ScanLink.exe` architecture.
-  - [x] On the target client PC, verify whether `C:\Windows\twain_64` contains a fi-6230Z/PaperStream x64 `.ds` source. User reports `C:\Windows\twain_64` does not exist.
-  - [ ] Test a ScanLink build made with 32-bit Python if only `C:\Windows\twain_32` contains the scanner source.
-  - [ ] If 32-bit build is validated, document separate x86/x64 release packaging strategy or build a 32-bit scan helper process.
-  - [ ] If distributing both full-app builds, update installer packaging because `setup.iss` currently expects `dist\ScanLink-{version}.exe` and does not parameterize x86/x64 suffixes.
+### One-line info about last verified Tests: [Max 5 lines]
+- 2026-07-08: `python3 -m unittest discover -s tests` passed 16 tests, 5 skipped; `python3 -m compileall scanner.py tray.py utils.py tests/test_scanner_profile.py` passed.
+- 2026-07-08: plain `python3 -m unittest discover` found 0 tests due repo layout; use `-s tests`.
+- 2026-07-08 limitation: local environment lacks `twain` and Windows scanner hardware, so live PaperStream verification was not run.
+- Prior checks: `python -m compileall build_exe.py`, `python build_exe.py --help`, and build dry-runs passed on 2026-04-29; Inno compile not available in local environment.
 
-- Completed Recently:
-  - [x] Updated `build_exe.py` to support `--arch both|x64|x86|current`.
-  - [x] Updated build output names to `ScanLink_{version}_x64.exe` and `ScanLink_{version}_x86.exe`.
-  - [x] Added `--python-x64` / `--python-x86` and `SCANLINK_PYTHON_X64` / `SCANLINK_PYTHON_X86` support so one build command can orchestrate both architectures when both interpreter paths are available.
-  - [x] Added preflight validation that the selected Python executable matches the requested architecture before running PyInstaller.
-  - [x] Updated `setup.iss` to accept `MyAppArch` (`x64` default, or `x86`) and consume `dist\ScanLink_{version}_{arch}.exe`.
-  - [x] Updated installer output naming to `ScanLinkSetup_{version}_{arch}.exe`.
+### One-line info about last time edited Docs: [Max 2 lines]
+- 2026-07-08: Updated scanner profile docs in `README.md`, `docs/architecture.md`, `docs/developer-guide.md`, `docs/api.md`; changelog entry `v0.7.2`.
 
-### Tests:
-Verified checks:
-- Read `scanner.py`: `ScannerManager.list_sources()` and diagnostics instantiate `twain.SourceManager`; no custom cross-bitness bridge exists.
-- Read `worker.py` and `scan_runtime.py`: scan subprocess is the same Python executable/app, so it has the same bitness as the packaged app.
-- Read `ScanLink.spec` and `build_exe.py`: `ScanLink.spec` remains architecture-neutral; `build_exe.py` now chooses x86/x64 build names and interpreter paths, while PyInstaller output still follows the selected interpreter architecture.
-- Checked official/public references on 2026-04-29: TWAIN DSM has separate 32-bit/64-bit DLLs and source directories; Ricoh pages list fi-6230Z TWAIN/PaperStream support pages mostly as archived and up to Windows 10 for PaperStream IP.
-- 2026-04-29: Ran `python -m compileall build_exe.py`.
-- 2026-04-29: Ran `python build_exe.py --help`.
-- 2026-04-29: Ran `python build_exe.py --arch current --dry-run`; generated `ScanLink_0.6.1_x64` command on the current x64 interpreter.
-- 2026-04-29: Ran `python build_exe.py --arch x86 --dry-run` without an x86 Python path; verified it fails clearly and asks for `--python-x86` or `SCANLINK_PYTHON_X86`.
-- 2026-04-29: Checked for `iscc`; Inno Setup compiler is not installed in this Linux environment, so `setup.iss` compile validation must be done on Windows.
-
-Suggested future checks:
-- Verify app bitness on target machine.
-- Verify whether the fi-6230Z exposes a 32-bit TWAIN source only.
-- Verify whether a 32-bit build of the app can enumerate the scanner on the target PC.
-
-### Docs:
-- User supplied operational scanner context in chat on 2026-04-29.
-- Useful TWAIN paths on 64-bit Windows:
-  - `C:\Windows\System32\TWAINDSM.DLL` is the 64-bit DSM location.
-  - `C:\Windows\SysWOW64\TWAINDSM.DLL` is the 32-bit DSM location.
-  - TWAIN data sources are typically under `C:\Windows\twain_32` or `C:\Windows\twain_64` as `.ds` files.
-- Ricoh/PFU official pages found:
-  - fi-6230Z TWAIN32 driver page: `https://www.pfu.ricoh.com/global/scanners/fi/support/software/v1021310-sca.html`
-  - PaperStream IP TWAIN x64 page: `https://www.pfu.ricoh.com/global/scanners/fi/support/software/fi6x30-fi6x40-ps-ip-twain64.html`
-  - PaperStream IP TWAIN page: `https://www.pfu.ricoh.com/global/scanners/fi/support/software/fi6x30-fi6x40-ps-ip-twain32.html`
-  - Ricoh FAQ: `https://fi-faq.pfu.ricoh.com/hc/en-us/articles/13322763972121`
-  - fi-7240 product page lists Software/Drivers as `PaperStream IP Driver (TWAIN/TWAIN x64/ISIS)`: `https://www.pfu.ricoh.com/global/scanners/fi/fi7240/`
-- Build compatibility note: PyInstaller cannot turn a 64-bit Python environment into a 32-bit Windows executable for this app. Build x64 from a 64-bit Python venv and x86 from a 32-bit Python venv. `build_exe.py` names outputs like `ScanLink_{version}_x64.exe` and `ScanLink_{version}_x86.exe`; `setup.iss` still needs adjustment for those suffixed installer inputs.
-- Build script usage after 2026-04-29 update:
-  - `python build_exe.py` defaults to `--arch both`.
-  - `python build_exe.py --arch x64` builds only x64.
-  - `python build_exe.py --arch x86 --python-x86 C:\Path\To\32bit\python.exe` builds only x86.
-  - `python build_exe.py --arch both --python-x64 C:\Path\To\64bit\python.exe --python-x86 C:\Path\To\32bit\python.exe` builds both.
-- Installer script usage after 2026-04-29 update:
-  - `iscc setup.iss` defaults to x64 and expects `dist\ScanLink_{version}_x64.exe`.
-  - `iscc /DMyAppArch=x64 setup.iss` builds `ScanLinkSetup_{version}_x64.exe`.
-  - `iscc /DMyAppArch=x86 setup.iss` builds `ScanLinkSetup_{version}_x86.exe`.
-
-## Part 2: Global
+## Part 2: Global [Max 20 lines]
 ### Global Standard Helpers, Shortcuts, Info, etc.:
-- Use `rg`/`rg --files` first for repository discovery when available.
+- Use `rg`/`rg --files` first for repository discovery.
+- TWAIN paths on 64-bit Windows: 64-bit DSM `C:\Windows\System32\TWAINDSM.DLL`; 32-bit DSM `C:\Windows\SysWOW64\TWAINDSM.DLL`; data sources usually `C:\Windows\twain_32`/`twain_64`.
 
-### Global Ruleset:
-- Keep tracker grounded in verified code, verified runtime behavior, or explicit user instruction.
-- Do not mix project-specific facts into the global section unless broadly reusable.
+### Global Rulesets:
+- Keep tracker facts grounded in verified code, verified runtime behavior, or explicit user correction.
+- Do not mix reusable/global guidance into project-specific sections.
 
 ### Agent Handoff Rules:
 - Re-read `tracker.md` at the start of every turn.
-- Update `tracker.md` after meaningful changes to project state, tasks, tests, docs, standards interpretation, or handoff guidance.
+- Update `tracker.md` after meaningful changes to bugs, tasks, tests, docs, standards interpretation, or handoff guidance.
 
-### Links To Possibly Helpful Tools and Projects if any:
-- `/home/debeski/depy/tools/DNgine/tracker.md`
-- `/home/debeski/depy/projects/archive/tracker.md`
-
-### References:
-- None yet.
+### References and Links:
+- Related archive project: `/Users/debeski/Desktop/depy/project-archive`.

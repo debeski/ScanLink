@@ -7,6 +7,10 @@ from pystray import Icon, Menu, MenuItem
 
 from utils import (
     APP_VERSION,
+    DEFAULT_COLOR_MODE,
+    DEFAULT_RESOLUTION,
+    DEFAULT_SCAN_SIDE,
+    DEFAULT_SCAN_SOURCE,
     get_logger,
     get_resource_path,
     is_ssl_available,
@@ -35,8 +39,12 @@ def format_scanner_diagnostics_report(diagnostics):
         "",
         f"TWAIN available: {'Yes' if diagnostics.get('twain_available') else 'No'}",
         f"Default scanner: {diagnostics.get('default_scanner') or 'Not set'}",
-        f"Resolution: {diagnostics.get('resolution', 240)} DPI",
+        f"Resolution: {diagnostics.get('resolution', DEFAULT_RESOLUTION)} DPI",
+        f"Scan source: {format_scan_source(diagnostics.get('scan_source'))}",
+        f"Scan side: {format_scan_side(diagnostics.get('scan_side'))}",
+        f"Color mode: {format_color_mode(diagnostics.get('color_mode'))}",
         f"Show scanner UI: {'Yes' if diagnostics.get('show_scanner_ui') else 'No'}",
+        f"Paper protection: {'On' if diagnostics.get('paper_protection') else 'Off'}",
         "",
     ]
 
@@ -63,6 +71,28 @@ def format_scanner_diagnostics_report(diagnostics):
         lines.append("")
 
     return "\n".join(lines).rstrip()
+
+
+def format_scan_source(value):
+    return {
+        "adf": "ADF",
+        "flatbed": "Flatbed",
+    }.get(value or DEFAULT_SCAN_SOURCE, "ADF")
+
+
+def format_scan_side(value):
+    return {
+        "front": "Front",
+        "front_back": "Front and Back",
+    }.get(value or DEFAULT_SCAN_SIDE, "Front")
+
+
+def format_color_mode(value):
+    return {
+        "color": "Color",
+        "grayscale": "Grayscale",
+        "black_white": "Black and White",
+    }.get(value or DEFAULT_COLOR_MODE, "Color")
 
 
 class TrayApp:
@@ -121,8 +151,21 @@ class TrayApp:
 
             return handler
 
+        def set_config_value(key, value):
+            def handler(icon, item):
+                config = load_config()
+                config[key] = value
+                save_config(config)
+                if self.icon:
+                    self.icon.update_menu()
+
+            return handler
+
         def resolution_checked(dpi):
-            return lambda item: float(load_config().get("resolution", 240)) == dpi
+            return lambda item: float(load_config().get("resolution", DEFAULT_RESOLUTION)) == dpi
+
+        def config_checked(key, value):
+            return lambda item: load_config().get(key) == value
 
         def resolution_enabled(item):
             return not self.worker.is_busy()
@@ -209,6 +252,22 @@ class TrayApp:
             MenuItem("300 DPI", set_resolution(300), checked=resolution_checked(300), radio=True, enabled=resolution_enabled),
         )
 
+        scan_source_menu = Menu(
+            MenuItem("ADF", set_config_value("scan_source", "adf"), checked=config_checked("scan_source", "adf"), radio=True, enabled=resolution_enabled),
+            MenuItem("Flatbed", set_config_value("scan_source", "flatbed"), checked=config_checked("scan_source", "flatbed"), radio=True, enabled=resolution_enabled),
+        )
+
+        scan_side_menu = Menu(
+            MenuItem("Front", set_config_value("scan_side", "front"), checked=config_checked("scan_side", "front"), radio=True, enabled=resolution_enabled),
+            MenuItem("Front and Back", set_config_value("scan_side", "front_back"), checked=config_checked("scan_side", "front_back"), radio=True, enabled=resolution_enabled),
+        )
+
+        color_mode_menu = Menu(
+            MenuItem("Color", set_config_value("color_mode", "color"), checked=config_checked("color_mode", "color"), radio=True, enabled=resolution_enabled),
+            MenuItem("Grayscale", set_config_value("color_mode", "grayscale"), checked=config_checked("color_mode", "grayscale"), radio=True, enabled=resolution_enabled),
+            MenuItem("Black and White", set_config_value("color_mode", "black_white"), checked=config_checked("color_mode", "black_white"), radio=True, enabled=resolution_enabled),
+        )
+
         diagnostics_menu = Menu(
             MenuItem("List Detected Scanners", on_list_detected_scanners, enabled=lambda item: not self.worker.is_busy()),
             MenuItem("Show Driver Details", on_show_driver_details, enabled=lambda item: not self.worker.is_busy()),
@@ -229,6 +288,18 @@ class TrayApp:
             ),
             Menu.SEPARATOR,
             MenuItem("Test Scan", on_test_scan, enabled=lambda item: not self.worker.is_busy()),
+            MenuItem(
+                lambda item: f"Source: {format_scan_source(load_config().get('scan_source'))}",
+                scan_source_menu,
+            ),
+            MenuItem(
+                lambda item: f"Side: {format_scan_side(load_config().get('scan_side'))}",
+                scan_side_menu,
+            ),
+            MenuItem(
+                lambda item: f"Color: {format_color_mode(load_config().get('color_mode'))}",
+                color_mode_menu,
+            ),
             MenuItem("Resolution", resolution_menu),
             MenuItem(
                 "Show Scanner UI",
