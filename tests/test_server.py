@@ -1,3 +1,4 @@
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -33,8 +34,10 @@ class FakeWorker:
             "started_at": None,
             "completed_at": None,
             "doc_id": doc_id,
+            "callback_url": callback_url,
             "page_count": 0,
             "metadata": metadata or {},
+            "source": source,
         }
         self.jobs[job["job_id"]] = {
             **job,
@@ -68,9 +71,10 @@ class ServerTests(unittest.TestCase):
     def setUp(self):
         self.worker = FakeWorker()
         self.transport_state = {"http_enabled": True, "https_enabled": False}
+        self.shutdown_event = threading.Event()
         self.config_patch = patch("server.load_config", return_value={"cors_origins": ["*"]})
         self.config_patch.start()
-        self.app = server.create_app(self.worker, shutdown_event=type("E", (), {"set": lambda self: None})(), transport_state=self.transport_state)
+        self.app = server.create_app(self.worker, self.shutdown_event, self.transport_state)
         self.client = self.app.test_client()
 
     def tearDown(self):
@@ -84,12 +88,49 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["status"], "ok")
         self.assertTrue(payload["http_enabled"])
         self.assertFalse(payload["https_enabled"])
+        self.assertEqual(payload["version"], server.APP_VERSION)
+        self.assertEqual(payload["arch"], server.APP_ARCH)
+        self.assertFalse(payload["busy"])
+        self.assertTrue(payload["twain_available"])
+
+    def test_scan_request_maps_browser_payload_to_job(self):
+        response = self.client.post(
+            "/scan",
+            json={
+                "docId": "DOC-42",
+                "callback": "https://example.com/scans",
+                "metadata": {"field": "pdf_file"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        job = self.worker.jobs[response.get_json()["job_id"]]
+        self.assertEqual(job["doc_id"], "DOC-42")
+        self.assertEqual(job["callback_url"], "https://example.com/scans")
+        self.assertEqual(job["metadata"], {"field": "pdf_file"})
+        self.assertEqual(job["source"], "api")
 
     def test_scan_requires_json(self):
         response = self.client.post("/scan", data="not-json")
 
         self.assertEqual(response.status_code, 415)
         self.assertEqual(response.get_json()["error"]["code"], "json_required")
+
+    def test_scan_rejects_invalid_json(self):
+        response = self.client.post(
+            "/scan",
+            data="{invalid",
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"]["code"], "invalid_json")
+
+    def test_scan_rejects_non_object_metadata(self):
+        response = self.client.post("/scan", json={"metadata": ["invalid"]})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"]["code"], "invalid_metadata")
 
     def test_scan_returns_busy_conflict(self):
         self.worker.busy = True
@@ -127,6 +168,63 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.mimetype, "application/pdf")
+        self.assertIn("scan_job-123.pdf", response.headers["Content-Disposition"])
+
+    def test_status_and_result_report_missing_job(self):
+        status_response = self.client.get("/scan/missing")
+        result_response = self.client.get("/scan/missing/result")
+
+        self.assertEqual(status_response.status_code, 404)
+        self.assertEqual(status_response.get_json()["error"]["code"], "job_not_found")
+        self.assertEqual(result_response.status_code, 404)
+        self.assertEqual(result_response.get_json()["error"]["code"], "job_not_found")
+
+    def test_result_reports_not_ready(self):
+        self.worker.submit_job()
+
+        response = self.client.get("/scan/job-123/result")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["error"]["code"], "result_not_ready")
+        self.assertEqual(response.get_json()["error"]["current_status"], "queued")
+
+    def test_completed_result_can_only_be_downloaded_once(self):
+        self.worker.jobs["job-123"] = {
+            "job_id": "job-123",
+            "status": "completed",
+            "result_bytes": b"%PDF-1.4\nfake\n",
+        }
+
+        first_response = self.client.get("/scan/job-123/result")
+        second_response = self.client.get("/scan/job-123/result")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 410)
+        self.assertEqual(second_response.get_json()["error"]["code"], "result_unavailable")
+
+    def test_protocol_endpoint_queues_protocol_job(self):
+        response = self.client.post(
+            "/internal/protocol/scan",
+            json={"action": "scan", "doc_id": "DOC-9", "metadata": {"source": "link"}},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        job = self.worker.jobs[response.get_json()["job_id"]]
+        self.assertEqual(job["doc_id"], "DOC-9")
+        self.assertEqual(job["metadata"], {"source": "link"})
+        self.assertEqual(job["source"], "protocol")
+
+    def test_protocol_endpoint_rejects_unsupported_action(self):
+        response = self.client.post("/internal/protocol/scan", json={"action": "probe"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"]["code"], "unsupported_action")
+
+    def test_shutdown_sets_application_event(self):
+        response = self.client.post("/shutdown")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.shutdown_event.is_set())
 
 
 if __name__ == "__main__":

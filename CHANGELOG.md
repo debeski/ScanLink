@@ -2,6 +2,11 @@
 
 This file owns the release history for `ScanLink`.
 
+## v0.7.4
+
+- **Windows Installed-App Verification**: Added x86/x64 installer smoke tests for installed assets, HKCU startup/protocol registration, packaged runtime identity, live REST endpoints, protocol launch, and graceful shutdown before artifact publication.
+- **Critical API Coverage**: Added unit tests for runtime health identity, browser scan payloads, validation failures, status/result errors, one-time PDF retrieval, protocol queuing, and shutdown signaling.
+
 ## v0.7.3
 
 - **Mandatory Release Test Gate**: Made `tests` importable for top-level unittest discovery and blocked both release build jobs on the exact Windows test command used by CI.

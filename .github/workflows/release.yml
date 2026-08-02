@@ -74,6 +74,14 @@ jobs:
           $ver = (Get-Content VERSION -Raw).Trim()
           if (!(Test-Path "ScanLinkSetup_${ver}_${{ matrix.arch }}.exe")) { throw "installer was not produced" }
 
+      - name: Smoke test installed app (${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          $ver = (Get-Content VERSION -Raw).Trim()
+          & ./tests/windows_install_smoke.ps1 `
+            -ExpectedArch "${{ matrix.arch }}" `
+            -InstallerPath "ScanLinkSetup_${ver}_${{ matrix.arch }}.exe"
+
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.arch }}

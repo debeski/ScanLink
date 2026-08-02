@@ -36,7 +36,14 @@ Run the test suite:
 python -m unittest discover -s tests -t . -v
 ```
 
-The unit tests focus on server, worker, and protocol behavior. Real scanner behavior still needs manual Windows/TWAIN verification.
+The unit tests cover server, worker, protocol, scanner-profile, scan lifecycle,
+result retrieval, and shutdown behavior.
+
+After each x86/x64 installer is compiled in GitHub Actions,
+`tests/windows_install_smoke.ps1` silently installs it on the Windows runner and
+checks installed assets, the Start menu shortcut, HKCU startup and `scanlink://`
+registration, packaged version/architecture, live REST responses, protocol
+launch, and graceful shutdown.
 
 ## Icon Generation
 
@@ -134,19 +141,22 @@ The installer:
 
 ## Continuous Integration and Automated Releases
 
-GitHub Actions handles steps 3–5 automatically:
+GitHub Actions handles steps 3–6 automatically, including an installed-app
+smoke test for both architectures:
 
 - **`.github/workflows/ci.yml`** runs on every push/PR to `main` or `beta`: it
-  runs the unit tests (`python -m unittest discover -s tests`) and verifies that
-  both the x86 and x64 executable **and** installer build via `build_exe.py` and
-  `setup.iss`. Inno Setup is provisioned on the runner with `choco install
-  innosetup`; the 32/64-bit split comes from `actions/setup-python`'s
-  `architecture` matrix.
+  runs the unit tests (`python -m unittest discover -s tests -t . -v`) and
+  verifies that both the x86 and x64 executable **and** installer build via
+  `build_exe.py` and `setup.iss`. Each installer must then pass
+  `tests/windows_install_smoke.ps1`. Inno Setup is provisioned on the runner
+  with `choco install innosetup`; the 32/64-bit split comes from
+  `actions/setup-python`'s architecture matrix.
 - **`.github/workflows/release.yml`** runs on a pushed `v*` tag: it runs the same
   unit-test command and blocks both builds unless that test job passes, verifies
-  the tag equals the `VERSION` file, builds both installers, and publishes a
-  GitHub Release with notes from the matching `## vX.Y.Z` `CHANGELOG.md`
-  section. No secrets are required — it uses the built-in `GITHUB_TOKEN`.
+  the tag equals the `VERSION` file, builds and smoke-tests both installers, and
+  publishes a GitHub Release with notes from the matching `## vX.Y.Z`
+  `CHANGELOG.md` section. No secrets are required — it uses the built-in
+  `GITHUB_TOKEN`.
 
 To cut a release: set `VERSION` to `X.Y.Z`, add the matching `## vX.Y.Z`
 `CHANGELOG.md` section, commit, then:
@@ -155,7 +165,9 @@ To cut a release: set `VERSION` to `X.Y.Z`, add the matching `## vX.Y.Z`
 git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
 ```
 
-Steps 6–8 above (real scanner / install verification) remain manual.
+Physical tray visibility, real TWAIN source discovery/acquisition, generated PDF
+quality, HTTPS certificate trust, and uninstall cleanup still require a Windows
+test machine with the target scanner and driver.
 
 ## Manual Verification Commands
 
