@@ -33,7 +33,7 @@ python main.py --generate-ssl
 Run the test suite:
 
 ```powershell
-python -m unittest discover
+python -m unittest discover -s tests -t . -v
 ```
 
 The unit tests focus on server, worker, and protocol behavior. Real scanner behavior still needs manual Windows/TWAIN verification.
@@ -142,10 +142,11 @@ GitHub Actions handles steps 3–5 automatically:
   `setup.iss`. Inno Setup is provisioned on the runner with `choco install
   innosetup`; the 32/64-bit split comes from `actions/setup-python`'s
   `architecture` matrix.
-- **`.github/workflows/release.yml`** runs on a pushed `v*` tag: it verifies the
-  tag equals the `VERSION` file, builds both installers, and publishes a GitHub
-  Release with notes from the matching `## vX.Y.Z` `CHANGELOG.md` section. No
-  secrets are required — it uses the built-in `GITHUB_TOKEN`.
+- **`.github/workflows/release.yml`** runs on a pushed `v*` tag: it runs the same
+  unit-test command and blocks both builds unless that test job passes, verifies
+  the tag equals the `VERSION` file, builds both installers, and publishes a
+  GitHub Release with notes from the matching `## vX.Y.Z` `CHANGELOG.md`
+  section. No secrets are required — it uses the built-in `GITHUB_TOKEN`.
 
 To cut a release: set `VERSION` to `X.Y.Z`, add the matching `## vX.Y.Z`
 `CHANGELOG.md` section, commit, then:

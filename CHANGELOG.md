@@ -2,6 +2,10 @@
 
 This file owns the release history for `ScanLink`.
 
+## v0.7.3
+
+- **Mandatory Release Test Gate**: Made `tests` importable for top-level unittest discovery and blocked both release build jobs on the exact Windows test command used by CI.
+
 ## v0.7.2
 
 - **Archive-Safe Scanner Profile Defaults**: Added persisted scan profile settings with legacy config migration to ADF source, front-only/simplex side mode, 200 DPI, color pixel type, and `CAP_PAPERPROTECTION=False` for scanner batches used by archive uploads.
