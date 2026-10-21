@@ -18,6 +18,7 @@ pgadmin_data/
 .backups/
 .secrets/
 .xpose/
+.xclude/
 scanner_app/
 sidebar/
 users/

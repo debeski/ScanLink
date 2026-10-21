@@ -2,7 +2,7 @@
 
 ## Part 1: Project Related [Max 55 lines]
 ### Current Verified Snapshot: [Max 5 lines]
-- Workspace: `/Users/debeski/Desktop/depy/app-ScanLink`.
+- Workspace: `/Users/debeski/Desktop/depy/app-scanlink/main` (moved 2026-10-21 into the per-branch checkout layout; branches `<release line>/<work>`, rules in `AGENTS.md`).
 - Python Windows tray app packaged with PyInstaller/Inno Setup; TWAIN scan jobs run via `worker.py` -> child `main.py --scan-worker-dir` -> `scan_runtime.py`.
 - Scanner integration is `scanner.py` using `pytwain`/`twain.SourceManager`; generated PDFs are built with ReportLab from Pillow images.
 - Current version file: `0.7.4`; latest local git tag seen: `v0.7.3`.
