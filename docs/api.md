@@ -84,6 +84,8 @@ Errors:
 | HTTP | Code | Meaning |
 | --- | --- | --- |
 | 400 | `invalid_json` | Body could not be parsed as JSON. |
+| 400 | `invalid_payload` | JSON root was not an object. |
+| 400 | `invalid_callback` | Callback URL was not a string or could not be parsed. |
 | 400 | `invalid_metadata` | `metadata` was provided but is not an object. |
 | 409 | `busy` | Another scan job is queued or running. |
 | 415 | `json_required` | Request did not use JSON. |
@@ -144,7 +146,7 @@ Errors:
 
 ## GET /scan/<job_id>/result
 
-Downloads the scanned PDF for a completed job.
+Downloads the scanned PDF for a completed job. `completed` is published only after the child has exited and the parent has stored the PDF. Concurrent downloads are single-use: exactly one receives the bytes; later requests return `410` until the job metadata expires. PDF bytes are freed immediately after retrieval, while metadata remains until `job_ttl_seconds` from completion.
 
 Response:
 
@@ -158,9 +160,11 @@ Errors:
 | --- | --- | --- |
 | 404 | `job_not_found` | Job does not exist or expired. |
 | 409 | `result_not_ready` | Job is not completed yet. |
-| 410 | `result_unavailable` | Result was already consumed or expired. |
+| 410 | `result_unavailable` | Result was already consumed. |
 
 ## POST /internal/protocol/scan
+
+Requires an `application/json` object and applies the same metadata/callback validation as `/scan`; malformed requests never queue a scan. The optional `action` must be `scan`.
 
 Internal endpoint used by `scanlink://` launches to forward commands into an already-running ScanLink instance. Application integrations should normally use `POST /scan`.
 
@@ -215,3 +219,11 @@ runs, `ready` after trusted HTTPS starts, and `failed` after a setup/listener
 failure. Existing `http_enabled` and `https_enabled` remain listener flags.
 Older clients may ignore the new field; newer clients must tolerate its absence
 on older helpers. Existing HTTP scan jobs remain usable while setup runs.
+
+## Browser transport retries
+
+The bundled JavaScript client negotiates a healthy transport before its first scan.
+A scan POST is sent once on that transport. If the response or its body is lost,
+it rejects with `scan_request_uncertain` instead of resending the request over
+the other transport; the helper may already be scanning. Check ScanLink before
+starting another scan. Health and status reads retain transport fallback.

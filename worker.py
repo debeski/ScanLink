@@ -170,12 +170,12 @@ class ScanWorker(threading.Thread):
         logger.info("Processing job %s", job_id)
         emit_status(job_id, "processing")
 
-        scan_deadline = None
-        if self.scan_timeout_seconds > 0:
-            scan_deadline = time.monotonic() + self.scan_timeout_seconds
-
         try:
             def on_progress(status, **data):
+                if status == "completed":
+                    status = "generating_pdf"
+                elif status in TERMINAL_STATUSES:
+                    return
                 updates = {"status": status, "updated_at": time.time()}
                 if "page_count" in data:
                     updates["page_count"] = data["page_count"]
@@ -304,7 +304,10 @@ class ScanWorker(threading.Thread):
                     break
 
                 now = time.monotonic()
-                if self.gui_task_timeout_seconds > 0 and now - started_at > self.gui_task_timeout_seconds:
+                if any(
+                    limit > 0 and now - started_at >= limit
+                    for limit in (self.scan_timeout_seconds, self.gui_task_timeout_seconds)
+                ):
                     self._terminate_scan_process(process)
                     raise ScanProcessTimeoutError(
                         "scan_timeout",
@@ -472,13 +475,6 @@ class ScanWorker(threading.Thread):
 
             completed_at = job.get("completed_at") or job.get("updated_at") or now
             age_seconds = now - completed_at
-            result_missing = job.get("result_bytes") is None
-            result_retrieved_at = job.get("result_retrieved_at")
-
-            if result_missing and result_retrieved_at:
-                expired_job_ids.append(job_id)
-                continue
-
             ttl_seconds = self.job_ttl_seconds
             if status == "completed" and job.get("result_bytes") is not None:
                 ttl_seconds = self.result_ttl_seconds

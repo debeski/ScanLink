@@ -29,9 +29,11 @@ class WorkerTests(unittest.TestCase):
 
     def test_process_job_marks_completion_and_stores_result(self):
         worker = ScanWorker(queue.Queue())
-        worker._run_scan_subprocess = lambda job_id, on_progress: FakeScannerManager().scan_to_pdf(
-            job_id,
-            progress_callback=on_progress,
+        worker._run_scan_subprocess = (
+            lambda job_id, on_progress: FakeScannerManager().scan_to_pdf(
+                job_id,
+                progress_callback=on_progress,
+            )
         )
 
         queued = worker.submit_job(doc_id="abc")
@@ -46,7 +48,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(completed_job["status"], "completed")
         self.assertEqual(result_bytes, b"%PDF-1.4\nfake\n")
 
-    def test_consumed_result_is_cleaned_up(self):
+    def test_consumed_result_keeps_metadata_until_job_ttl(self):
         worker = ScanWorker(queue.Queue())
         now = time.time()
         worker.jobs["job-1"] = {
@@ -68,6 +70,9 @@ class WorkerTests(unittest.TestCase):
 
         _job, result_bytes = worker.consume_result("job-1")
         self.assertEqual(result_bytes, b"pdf")
+        self.assertIsNone(worker.jobs["job-1"]["result_bytes"])
+        self.assertEqual(worker.get_job("job-1")["status"], "completed")
+        worker.job_ttl_seconds = 0
         self.assertIsNone(worker.get_job("job-1"))
 
 

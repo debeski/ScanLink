@@ -3,6 +3,7 @@ import socket
 import ssl
 import threading
 import time
+from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, request, send_file
 from werkzeug.serving import make_server
@@ -56,6 +57,42 @@ def create_app(worker, shutdown_event, transport_state):
         response.status_code = status_code
         return apply_cors(response)
 
+    def scan_payload():
+        if not request.is_json:
+            return None, error_response(
+                415, "json_required", "Scan requests must use an application/json body."
+            )
+        data = request.get_json(silent=True)
+        if data is None:
+            return None, error_response(
+                400, "invalid_json", "Request body could not be parsed as JSON."
+            )
+        if not isinstance(data, dict):
+            return None, error_response(
+                400, "invalid_payload", "Scan requests must contain a JSON object."
+            )
+        if data.get("metadata") is not None and not isinstance(data["metadata"], dict):
+            return None, error_response(
+                400, "invalid_metadata", "metadata must be a JSON object when provided."
+            )
+        for name in ("callback_url", "callback"):
+            if data.get(name) is not None and not isinstance(data[name], str):
+                return None, error_response(
+                    400,
+                    "invalid_callback",
+                    "callback_url must be a string when provided.",
+                )
+            if isinstance(data.get(name), str):
+                try:
+                    urlparse(data[name])
+                except ValueError:
+                    return None, error_response(
+                        400,
+                        "invalid_callback",
+                        "callback_url could not be parsed as a URL.",
+                    )
+        return data, None
+
     @app.after_request
     def add_cors_headers(response):
         if is_browser_endpoint(request.path):
@@ -88,22 +125,9 @@ def create_app(worker, shutdown_event, transport_state):
         if request.method == "OPTIONS":
             return empty_options_response()
 
-        if not request.is_json:
-            return error_response(
-                415, "json_required", "Scan requests must use an application/json body."
-            )
-
-        data = request.get_json(silent=True)
-        if data is None:
-            return error_response(
-                400, "invalid_json", "Request body could not be parsed as JSON."
-            )
-
-        metadata = data.get("metadata")
-        if metadata is not None and not isinstance(metadata, dict):
-            return error_response(
-                400, "invalid_metadata", "metadata must be a JSON object when provided."
-            )
+        data, error = scan_payload()
+        if error is not None:
+            return error
 
         doc_id = data.get("doc_id") or data.get("docId")
         callback_url = data.get("callback_url") or data.get("callback")
@@ -112,7 +136,7 @@ def create_app(worker, shutdown_event, transport_state):
             job = worker.submit_job(
                 doc_id=doc_id,
                 callback_url=callback_url,
-                metadata=metadata,
+                metadata=data.get("metadata"),
                 source="api",
             )
         except BusyError as exc:
@@ -176,7 +200,9 @@ def create_app(worker, shutdown_event, transport_state):
 
     @app.route("/internal/protocol/scan", methods=["POST"])
     def internal_protocol_scan():
-        data = request.get_json(silent=True) or {}
+        data, error = scan_payload()
+        if error is not None:
+            return error
         if data.get("action", "scan") != "scan":
             return (
                 jsonify(
