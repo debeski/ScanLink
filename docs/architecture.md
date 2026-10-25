@@ -227,3 +227,10 @@ checked through the development project's authenticated distribution endpoints.
 The real worker also passed file-field/PDF-editor compatibility with published
 DjangoLux 1.15.1b1. Scanner hardware was simulated for local job tests; physical
 TWAIN and native browser/enterprise-policy acceptance remain separate checks.
+
+The paired published DjangoLux 1.15.1b2 acceptance passed on 2026-10-26:
+Composer upgrade with full backup, 694 package hashes in web/Celery, published
+client/templates, 300 health checks, 30 scans, 20-way contention, PDF save/download
+and Arabic lost-response guidance with one accepted scan POST. Both installer
+distribution hashes matched. The helper was stopped; physical scanner acceptance
+remains outstanding.
