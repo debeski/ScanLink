@@ -214,3 +214,9 @@ The release workflow publishes both architecture installers as a GitHub
 prerelease and leaves the stable latest release unchanged. Run the Windows
 unit/build/installed-app gates through the PR before tagging; publication also
 runs those gates. Paired DjangoLux 1.15.1b1 accepts these version identifiers.
+
+The installed-app smoke test approves only the Windows Yes prompt owned by the
+installed ScanLink executable and naming `ScanLink localhost`. It does not
+preinstall a certificate or disable verification. It then sends 120 HTTPS
+requests in batches of 12 before checking restart reuse. Stage logging pinpoints
+blocked setup without showing private key material.

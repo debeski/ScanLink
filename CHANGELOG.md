@@ -4,6 +4,8 @@ This file owns the release history for `ScanLink`.
 
 ## v0.7.5b1
 
+- **Windows First-Launch Consent Gate**: Exercise the specific ScanLink certificate Yes prompt in installed-app tests instead of bypassing trust; stress 120 normally verified HTTPS requests per architecture and log certificate setup stages.
+
 - **Beta Publication**: Mark beta/RC tags as GitHub prereleases and keep the stable latest pointer unchanged.
 
 - **Automatic Windows HTTPS Setup**: Provision and trust a localhost-only server certificate for the current Windows user during normal startup; encrypt its key with a DPAPI-protected password, repair missing trust, and renew within 30 days of expiry.

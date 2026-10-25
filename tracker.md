@@ -40,5 +40,5 @@
 - Test stacks belong under `~/Desktop/depy/testbed-*`, use Composer `--dev` and application admin/db123123; preserve testbed-dlux.
 ### Agent Handoff
 - Both patch checkouts are authorized by the owner from the app-mock-pdf chat; preserve that checkout's unrelated uncommitted changes.
-- Local implementation is complete; Windows acceptance is pending. Do not claim native/browser trust was verified on this Mac. Beta publication and testbed stress testing authorized on 2026-10-25; preserve stable releases and existing testbed data.
+- PR1 Windows binaries built; initial installed-app gates stalled at first-launch trust. Added scoped native Yes-prompt handling and 120 verified HTTPS stress requests; rerun pending. Do not claim native/browser trust was verified on this Mac. Beta publication and testbed stress testing authorized on 2026-10-25; preserve stable releases and existing testbed data.
 - Evidence: `.xclude/validation/`; paired Chrome evidence is in `pkg-django-lux/scanlink_https/.xclude/validation/chrome-loopback.log`.

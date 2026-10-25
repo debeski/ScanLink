@@ -121,6 +121,7 @@ def _install_trust(der):
     if not store:
         raise ctypes.WinError(ctypes.get_last_error())
     try:
+        logger.info("Requesting Windows current-user trust for ScanLink localhost")
         encoded = ctypes.create_string_buffer(der)
         # ADD_NEW: do not replace or remove another certificate.
         if not crypto.CertAddEncodedCertificateToStore(
@@ -132,6 +133,7 @@ def _install_trust(der):
         crypto.CertCloseStore(store, 0)
     if not _is_trusted(der):
         raise OSError("Windows did not trust the ScanLink certificate")
+    logger.info("Windows current-user certificate trust verified")
 
 
 class LocalIdentity:
@@ -266,11 +268,13 @@ class LocalIdentity:
             )
             .sign(key, hashes.SHA256())
         )
+        logger.info("Localhost server certificate generated")
         identity = uuid.uuid4().hex
         directory = self.root / identity
         directory.mkdir(parents=True, mode=0o700)
         password = base64.b64encode(os.urandom(32))
         secret = _protect_secret(password)
+        logger.info("Localhost private-key password protected with Windows DPAPI")
         bundle = certificate.public_bytes(
             serialization.Encoding.PEM
         ) + key.private_bytes(

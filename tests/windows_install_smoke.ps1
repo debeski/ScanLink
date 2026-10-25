@@ -25,6 +25,47 @@ $logPath = Join-Path $env:LOCALAPPDATA "ScanLink\scanner.log"
 $healthUri = "http://127.0.0.1:5000/health"
 $appProcess = $null
 
+# Exercise the real first-launch consent rather than bypassing Windows trust.
+Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class ScanLinkConsent {
+    private delegate bool EnumWindow(IntPtr window, IntPtr parameter);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindow callback, IntPtr parameter);
+    [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumWindow callback, IntPtr parameter);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder text, int maximum);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")] private static extern IntPtr GetDlgItem(IntPtr window, int identifier);
+    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    public static bool Approve(string executable) {
+        bool approved = false;
+        EnumWindows((window, parameter) => {
+            uint processId;
+            GetWindowThreadProcessId(window, out processId);
+            try {
+                if (!String.Equals(Process.GetProcessById((int)processId).MainModule.FileName, executable, StringComparison.OrdinalIgnoreCase)) return true;
+            } catch { return true; }
+            var text = new StringBuilder();
+            EnumChildWindows(window, (child, unused) => {
+                var value = new StringBuilder(4096);
+                GetWindowText(child, value, value.Capacity);
+                text.AppendLine(value.ToString());
+                return true;
+            }, IntPtr.Zero);
+            if (!text.ToString().Contains("ScanLink localhost")) return true;
+            IntPtr yes = GetDlgItem(window, 6); // IDYES, independent of UI language.
+            if (yes == IntPtr.Zero) return true;
+            SendMessage(yes, 0x00F5, IntPtr.Zero, IntPtr.Zero); // BM_CLICK
+            approved = true;
+            return false;
+        }, IntPtr.Zero);
+        return approved;
+    }
+}
+'@
+
 $portInUse = $false
 try {
     $null = Invoke-RestMethod -Uri $healthUri -TimeoutSec 2
@@ -112,6 +153,9 @@ try {
     }
     $secureDeadline = [DateTime]::UtcNow.AddSeconds(45)
     while (!$health.https_enabled -and [DateTime]::UtcNow -lt $secureDeadline) {
+        if ([ScanLinkConsent]::Approve($appExe)) {
+            Write-Host "Approved the Windows certificate prompt for ScanLink localhost."
+        }
         if ($health.https_setup -eq "failed") { throw "Automatic HTTPS setup failed." }
         Start-Sleep -Milliseconds 500
         $health = Invoke-RestMethod -Uri $healthUri -TimeoutSec 3
@@ -122,6 +166,13 @@ try {
     # Use normal Windows TLS verification: no trust bypass or certificate CLI.
     $secureHealth = Invoke-RestMethod -Uri "https://localhost:5443/health" -TimeoutSec 5
     if ($secureHealth.version -ne $version) { throw "Trusted HTTPS returned the wrong version." }
+    $stressResults = @(1..120 | ForEach-Object -Parallel {
+        $response = Invoke-RestMethod -Uri "https://localhost:5443/health" -TimeoutSec 10
+        if ($response.status -ne "ok" -or !$response.https_enabled) { throw "HTTPS stress request failed." }
+        $true
+    } -ThrottleLimit 12)
+    if ($stressResults.Count -ne 120) { throw "HTTPS stress did not complete every request." }
+    Write-Host "120 concurrent-batch HTTPS requests passed with normal Windows certificate verification."
     $identityPath = Join-Path $env:LOCALAPPDATA "ScanLink\https\active.json"
     $firstIdentity = (Get-Content $identityPath -Raw | ConvertFrom-Json).identity
     if ($health.busy) {
