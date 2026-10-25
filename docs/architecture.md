@@ -13,6 +13,7 @@ ScanLink is a Windows tray application that exposes a local browser API and isol
 | `scanner.py` | TWAIN scanner manager. Lists sources, opens the selected scanner, acquires pages, and generates PDFs. |
 | `tray.py` | System tray icon and menu actions. Controls source, side, color mode, resolution, diagnostics, startup, scanner UI, paper protection, and quit. |
 | `protocol_handler.py` | Parses `scanlink://` URLs and forwards protocol launches to an existing local instance. |
+| `certificates.py` | Per-user localhost identity, Windows trust, DPAPI key-password protection, and renewal. |
 | `utils.py` | Shared logging, config, version, SSL certificate, startup, and resource helpers. |
 | `gui/dialogs.py` | Tk dialogs for scanner selection and diagnostics output. |
 
@@ -157,20 +158,41 @@ HTTPS:
 127.0.0.1:5443
 ```
 
-HTTPS starts only when these files exist and load successfully:
+On normal startup the server thread starts HTTP first, then prepares a trusted
+HTTPS identity automatically. A one-year self-signed **server** certificate
+(`BasicConstraints CA=False`, serverAuth EKU, no certificate-signing usage)
+covers only `localhost`, `127.0.0.1`, and `::1`. Windows CryptoAPI adds that
+specific certificate to **CurrentUser\Root**; no general-purpose CA, shared key,
+external certificate service, administrator CLI or machine-wide trust is used.
+Browser/organization policy can still block user-installed trust.
 
-```text
-%LOCALAPPDATA%\ScanLink\localhost.pem
-%LOCALAPPDATA%\ScanLink\localhost-key.pem
-```
+`certificates.LocalIdentity` keeps immutable identities under
+`%LOCALAPPDATA%\ScanLink\https\<identity>\`. `localhost.pem` contains the
+public certificate and an encrypted PKCS#8 private key; `password.dpapi` holds
+the random key password encrypted for this Windows login. `active.json` points
+to the current identity. Key material is validated before activation; HTTPS is enabled only after trust verification.
+failed trust installation is reported as failure and retried with the same
+identity. Superseded identities move to `.xclude/https/` in the app data folder.
+Existing legacy mkcert credentials are not used or removed.
 
-They can be generated with:
+Each launch checks validity, names, purpose, key matching and Windows root-store
+membership. Missing trust is repaired without replacing the key. Identities
+within 30 days of expiry are renewed. The server rechecks hourly and selects
+the current SSLContext on each new TLS handshake, preserving active connections.
+HTTP scanning stays available during setup. `/health.https_setup` is
+`preparing`, `ready`, or `failed`. A failed first attempt opens a native Retry
+prompt; the tray has **Retry secure connection setup** for later repairs.
+Automatic hourly retries do not repeatedly open dialogs.
 
-```powershell
-ScanLink.exe --generate-ssl
-```
+`--generate-ssl` remains a support/development compatibility command; ordinary
+installation and use do not require it. The installer launches the normal app,
+which performs the same setup for installed and portable builds. Uninstall
+keeps the encrypted identity so a reinstall can reuse it. The generated certificate has server-only usage and no certificate-signing
+permission. Nothing is sent to the application VM.
 
-when `mkcert.exe` is available in the bundled resources.
+The paired DjangoLux patch is 1.15.1b1; the REST API remains compatible with older
+clients. Browser local-network permission, CSP and an insecure application
+origin are separate from ScanLink certificate provisioning.
 
 ## Single Instance and Protocol Handling
 

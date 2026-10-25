@@ -17,6 +17,7 @@ REQUIRED_BUILD_MODULES = (
     ("pystray", "pystray"),
     ("requests", "requests"),
     ("twain", "pytwain"),
+    ("cryptography", "cryptography"),
 )
 
 
@@ -35,11 +36,6 @@ APP_VERSION = read_version()
 
 r"""
 ScanLink build script.
-
-Prerequisite:
-1. Download mkcert.exe from https://github.com/FiloSottile/mkcert/releases
-   and place it in the project root before building if you want optional
-   trusted localhost HTTPS support.
 
 Usage:
     python build_exe.py
@@ -76,7 +72,7 @@ def ensure_venv(arch, base_python):
     if os.path.exists(REQUIREMENTS_FILE):
         print(f"Installing requirements into {arch} venv ...")
         subprocess.run(
-            [python_exe, "-m", "pip", "install", "--quiet", "-r", REQUIREMENTS_FILE],
+            [python_exe, "-m", "pip", "install", "--quiet", "--only-binary=cryptography", "-r", REQUIREMENTS_FILE],
             check=True,
         )
         print(f"{arch} requirements installed.")
@@ -197,10 +193,6 @@ def build_pyinstaller_args(build_name):
         pyinstaller_args.append("--icon=app_icon.ico")
         pyinstaller_args.append(add_data_arg("app_icon.ico"))
 
-    if os.path.exists("mkcert.exe"):
-        pyinstaller_args.append(add_data_arg("mkcert.exe"))
-        print("mkcert.exe will be bundled for optional HTTPS certificate generation")
-
     return pyinstaller_args
 
 
@@ -226,13 +218,6 @@ def main():
     args = parse_args()
     requested_arches = resolve_requested_arches(args.arch)
     python_by_arch = {}
-
-    if not os.path.exists("mkcert.exe"):
-        print("WARNING: mkcert.exe not found!")
-        print("Download from: https://github.com/FiloSottile/mkcert/releases")
-        print("Place mkcert-vX.X.X-windows-amd64.exe as 'mkcert.exe' in this folder.")
-        print("Continuing without mkcert (HTTP scanning will still work; trusted HTTPS will be unavailable).")
-        print()
 
     for arch in requested_arches:
         python_executable = resolve_python_for_arch(arch, args)

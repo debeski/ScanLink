@@ -38,7 +38,7 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 - **ReportLab**: Professional PDF generation engine.
 - **PyStray**: System tray icon and menu integration.
 - **Tkinter**: Native GUI dialogs for scanner selection.
-- **mkcert**: Auto-generates trusted localhost SSL certificates.
+- **cryptography + Windows CryptoAPI/DPAPI**: Generate a localhost identity, trust its server certificate for the current user, and protect its private key.
 - **PyInstaller**: Compilation into standalone Windows executable.
 - **Inno Setup**: Professional Windows installer generation.
 
@@ -48,9 +48,13 @@ ScanLink is a robust, lightweight system-tray application that bridges the gap b
 
 ### Method 1: Windows Installer (Recommended)
 1. Download and run `ScanLinkSetup.exe`.
-2. Follow the installation wizard (installs to `Program Files (x86)\ScanLink`).
+2. Follow the installation wizard (installs to your Windows user profile).
 3. Launch **ScanLink** from your Start Menu or Desktop.
-4. The app will appear in your system tray (near the clock).
+4. The app appears in your system tray and sets up its secure connection automatically. Approve any Windows or browser prompt, then scan from your application. No commands or certificate imports are needed.
+
+If Windows blocks setup, ScanLink offers **Retry**. You can also right-click its
+tray icon and choose **Retry secure connection setup**. If your organization
+manages this computer and setup stays blocked, contact your support team.
 
 ### Method 2: Portable Executable
 1. Unzip the release package.
@@ -90,7 +94,11 @@ ScanLink exposes a local REST API for browser apps:
 - `GET http://127.0.0.1:5000/scan/<job_id>`
 - `GET http://127.0.0.1:5000/scan/<job_id>/result`
 
-HTTPS is also available at `https://127.0.0.1:5443` when trusted localhost certificates exist.
+HTTPS is prepared automatically at `https://127.0.0.1:5443` on Windows. Healthy
+identities are reused and renewed before expiry. `/health.https_setup` reports
+`preparing`, `ready`, or `failed`; HTTP remains available while setup runs.
+The certificate is a localhost-only server identity, not a certificate authority.
+See [architecture](docs/architecture.md#local-transports) for trust and key storage.
 
 Minimal browser flow:
 

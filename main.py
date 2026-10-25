@@ -4,6 +4,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+from tkinter import messagebox
 
 from gui.dialogs import init_gui
 from protocol_handler import (
@@ -15,7 +16,7 @@ from protocol_handler import (
 from scan_runtime import run_scan_job
 from server import run_server
 from tray import TrayApp
-from utils import APP_VERSION, ensure_ssl_certificates, get_logger, is_ssl_available, setup_logging
+from utils import APP_VERSION, ensure_ssl_certificates, get_logger, setup_logging
 from worker import ScanWorker, set_status_callback
 
 
@@ -24,7 +25,9 @@ def main():
     logger = setup_logging()
     logger.info("ScanLink v%s starting", APP_VERSION)
 
-    parser = argparse.ArgumentParser(description="ScanLink - Scanner Bridge for Web Apps")
+    parser = argparse.ArgumentParser(
+        description="ScanLink - Scanner Bridge for Web Apps"
+    )
     parser.add_argument("url", nargs="?", help="Protocol URL (scanlink://...)")
     parser.add_argument("--scan-worker-dir", help=argparse.SUPPRESS)
     parser.add_argument(
@@ -58,11 +61,6 @@ def main():
         logger.info("Another ScanLink instance is already running. Exiting.")
         return 0
 
-    if is_ssl_available():
-        logger.info("Trusted localhost HTTPS certificates are available")
-    else:
-        logger.info("Trusted localhost HTTPS certificates not found; HTTP loopback listener will remain available")
-
     root = tk.Tk()
     root.withdraw()
     root.update()
@@ -71,16 +69,31 @@ def main():
 
     shutdown_event = threading.Event()
     gui_task_queue = queue.Queue()
+    https_retry_event = threading.Event()
     worker = ScanWorker(gui_task_queue)
+
+    def offer_https_retry():
+        def show_setup_message():
+            if messagebox.askretrycancel(
+                "ScanLink connection setup",
+                "ScanLink could not finish setting up its secure connection. "
+                "Approve any Windows security prompt, then choose Retry. "
+                "If your organization manages this computer, ask your support team for help.",
+                parent=root,
+            ):
+                https_retry_event.set()
+
+        gui_task_queue.put((show_setup_message, queue.Queue()))
+
     set_status_callback(None)
 
-    tray = TrayApp(worker, shutdown_event)
+    tray = TrayApp(worker, shutdown_event, https_retry_event)
 
     worker.start()
 
     server_thread = threading.Thread(
         target=run_server,
-        args=(worker, shutdown_event),
+        args=(worker, shutdown_event, https_retry_event, offer_https_retry),
         daemon=True,
         name="LoopbackServerManager",
     )
@@ -94,6 +107,7 @@ def main():
     tray_thread.start()
 
     if protocol_command and protocol_command.get("action") == "scan":
+
         def queue_protocol_scan():
             try:
                 worker.submit_job(

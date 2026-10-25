@@ -2,6 +2,18 @@
 
 This file owns the release history for `ScanLink`.
 
+## v0.7.5b1
+
+- **Windows x86 Crypto Wheels**: Resolve cryptography from compatible binary wheels during executable builds, avoiding an unsupported latest-source Rust/OpenSSL compilation on 32-bit Python.
+
+- **Windows First-Launch Consent Gate**: Exercise the specific ScanLink certificate Yes prompt in installed-app tests instead of bypassing trust; stress 120 normally verified HTTPS requests per architecture and log certificate setup stages.
+
+- **Beta Publication**: Mark beta/RC tags as GitHub prereleases and keep the stable latest pointer unchanged.
+
+- **Automatic Windows HTTPS Setup**: Provision and trust a localhost-only server certificate for the current Windows user during normal startup; encrypt its key with a DPAPI-protected password, repair missing trust, and renew within 30 days of expiry.
+- **Background Setup And Renewal**: Preserve HTTP scanning while preparing HTTPS, expose `https_setup` in `/health`, swap renewed identities for new TLS handshakes, and offer native Retry plus a tray repair action on setup failures.
+- **Installer HTTPS Verification**: Verify trusted HTTPS without bypassing certificate checks and reuse the identity after restart in both x86/x64 installed-app smoke gates; remove the optional mkcert build dependency.
+
 ## v0.7.4
 
 - **Windows Installed-App Verification**: Added x86/x64 installer smoke tests for installed assets, HKCU startup/protocol registration, packaged runtime identity, live REST endpoints, protocol launch, and graceful shutdown before artifact publication.

@@ -8,7 +8,7 @@ This guide covers local development, executable builds, and installer builds.
 - Python 3.10+
 - TWAIN-compatible scanner and driver for real scan testing
 - Inno Setup for installer builds
-- Optional: `mkcert.exe` in the project root for trusted localhost HTTPS support
+- `cryptography` (installed by requirements/build helper); Windows CryptoAPI and DPAPI are built into Windows
 
 Install Python dependencies:
 
@@ -22,7 +22,7 @@ Run from source:
 python main.py
 ```
 
-Generate trusted localhost certificates and exit:
+Normal startup provisions and renews trusted localhost HTTPS automatically. For support/development only, provision the identity and exit:
 
 ```powershell
 python main.py --generate-ssl
@@ -43,7 +43,7 @@ After each x86/x64 installer is compiled in GitHub Actions,
 `tests/windows_install_smoke.ps1` silently installs it on the Windows runner and
 checks installed assets, the Start menu shortcut, HKCU startup and `scanlink://`
 registration, packaged version/architecture, live REST responses, protocol
-launch, and graceful shutdown.
+launch, normal Windows-verified HTTPS, identity reuse after restart, and graceful shutdown. No certificate verification bypass is used.
 
 ## Icon Generation
 
@@ -206,3 +206,21 @@ Open a protocol link:
 ```powershell
 Start-Process "scanlink://scan?docId=DOC-123"
 ```
+
+## Beta installers
+
+A beta tag such as `v0.7.5b1` must match VERSION and the changelog section.
+The release workflow publishes both architecture installers as a GitHub
+prerelease and leaves the stable latest release unchanged. Run the Windows
+unit/build/installed-app gates through the PR before tagging; publication also
+runs those gates. Paired DjangoLux 1.15.1b1 accepts these version identifiers.
+
+The installed-app smoke test approves only the Windows Yes prompt owned by the
+installed ScanLink executable and naming `ScanLink localhost`. It does not
+preinstall a certificate or disable verification. It then sends 120 HTTPS
+requests in batches of 12 before checking restart reuse. Stage logging pinpoints
+blocked setup without showing private key material.
+
+The build wrapper requires a binary cryptography wheel. Pip selects the newest
+compatible wheel per Python architecture instead of attempting a source build
+of a newer release that no longer publishes Windows x86 wheels.

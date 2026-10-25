@@ -200,85 +200,37 @@ def get_resource_path(relative_path):
 # ============================================================================
 # SSL/HTTPS Certificate Management
 # ============================================================================
-SSL_CERT_FILE = os.path.join(APP_DIR, 'localhost.pem')
-SSL_KEY_FILE = os.path.join(APP_DIR, 'localhost-key.pem')
-MKCERT_EXE = 'mkcert.exe'
-
 def get_ssl_context(log_errors=True):
-    """
-    Returns SSL context if certificates exist, otherwise None.
-    """
-    if os.path.exists(SSL_CERT_FILE) and os.path.exists(SSL_KEY_FILE):
-        try:
-            import ssl
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(SSL_CERT_FILE, SSL_KEY_FILE)
-            return ctx
-        except Exception as e:
-            if log_errors:
-                get_logger().error(f"Failed to load SSL context: {e}")
-            return None
-    return None
+    from certificates import LocalIdentity
+
+    try:
+        return LocalIdentity(APP_DIR).context()
+    except Exception:
+        if log_errors:
+            get_logger().exception("ScanLink HTTPS identity is unavailable")
+        return None
+
 
 def is_ssl_available():
-    """Check if SSL certificates are available."""
     return get_ssl_context(log_errors=False) is not None
 
-def generate_ssl_certificates():
-    """
-    Generates localhost SSL certificates using bundled mkcert.
-    Returns True on success, False on failure.
-    """
-    import subprocess
-    
-    logger = get_logger()
-    mkcert_path = get_resource_path(MKCERT_EXE)
-    
-    if not os.path.exists(mkcert_path):
-        logger.error(f"mkcert not found at {mkcert_path}")
-        return False
-    
-    try:
-        # Install local CA (one-time, requires admin on first run)
-        result = subprocess.run(
-            [mkcert_path, '-install'],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            logger.warning(f"mkcert -install warning: {result.stderr}")
-        else:
-            logger.info("mkcert CA installed successfully")
-        
-        # Generate certificates for localhost
-        result = subprocess.run(
-            [mkcert_path, '-cert-file', SSL_CERT_FILE, '-key-file', SSL_KEY_FILE,
-             'localhost', '127.0.0.1', '::1'],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            logger.error(f"mkcert certificate generation failed: {result.stderr}")
-            return False
-        
-        logger.info(f"SSL certificates generated: {SSL_CERT_FILE}")
-        return True
-        
-    except subprocess.TimeoutExpired:
-        logger.error("mkcert timed out")
-        return False
-    except Exception as e:
-        logger.error(f"SSL certificate generation failed: {e}")
-        return False
 
 def ensure_ssl_certificates(generate_if_missing=False):
-    """
-    Ensures SSL certificates exist and optionally generates them.
-    Returns True if certificates are available.
-    """
-    if is_ssl_available():
+    from certificates import LocalIdentity
+
+    try:
+        if generate_if_missing:
+            LocalIdentity(APP_DIR).ensure()
+        else:
+            LocalIdentity(APP_DIR).context()
         return True
-    if not generate_if_missing:
+    except Exception:
+        get_logger().exception("ScanLink could not prepare its trusted HTTPS connection")
         return False
-    return generate_ssl_certificates()
+
+
+def generate_ssl_certificates():
+    return ensure_ssl_certificates(generate_if_missing=True)
 
 
 # ============================================================================

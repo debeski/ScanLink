@@ -1,10 +1,23 @@
 import io
+import socket
+import ssl
 import threading
+import time
 
 from flask import Flask, Response, jsonify, request, send_file
 from werkzeug.serving import make_server
 
-from utils import APP_ARCH, APP_VERSION, HTTP_HOST, HTTP_PORT, HTTPS_PORT, get_logger, get_ssl_context, load_config
+from utils import (
+    APP_ARCH,
+    APP_VERSION,
+    HTTP_HOST,
+    HTTP_PORT,
+    HTTPS_PORT,
+    get_logger,
+    get_ssl_context,
+    ensure_ssl_certificates,
+    load_config,
+)
 from worker import BusyError
 
 logger = get_logger()
@@ -63,6 +76,10 @@ def create_app(worker, shutdown_event, transport_state):
                 "http_enabled": transport_state.get("http_enabled", False),
                 "https_enabled": transport_state.get("https_enabled", False),
                 "twain_available": worker.is_twain_available(),
+                "https_setup": transport_state.get(
+                    "https_setup",
+                    "ready" if transport_state.get("https_enabled") else "unavailable",
+                ),
             }
         )
 
@@ -72,15 +89,21 @@ def create_app(worker, shutdown_event, transport_state):
             return empty_options_response()
 
         if not request.is_json:
-            return error_response(415, "json_required", "Scan requests must use an application/json body.")
+            return error_response(
+                415, "json_required", "Scan requests must use an application/json body."
+            )
 
         data = request.get_json(silent=True)
         if data is None:
-            return error_response(400, "invalid_json", "Request body could not be parsed as JSON.")
+            return error_response(
+                400, "invalid_json", "Request body could not be parsed as JSON."
+            )
 
         metadata = data.get("metadata")
         if metadata is not None and not isinstance(metadata, dict):
-            return error_response(400, "invalid_metadata", "metadata must be a JSON object when provided.")
+            return error_response(
+                400, "invalid_metadata", "metadata must be a JSON object when provided."
+            )
 
         doc_id = data.get("doc_id") or data.get("docId")
         callback_url = data.get("callback_url") or data.get("callback")
@@ -109,7 +132,9 @@ def create_app(worker, shutdown_event, transport_state):
 
         job = worker.get_job(job_id)
         if not job:
-            return error_response(404, "job_not_found", "The requested scan job was not found.")
+            return error_response(
+                404, "job_not_found", "The requested scan job was not found."
+            )
         return jsonify(job)
 
     @app.route("/scan/<job_id>/result", methods=["GET", "OPTIONS"])
@@ -119,7 +144,9 @@ def create_app(worker, shutdown_event, transport_state):
 
         job = worker.get_job(job_id)
         if not job:
-            return error_response(404, "job_not_found", "The requested scan job was not found.")
+            return error_response(
+                404, "job_not_found", "The requested scan job was not found."
+            )
         if job["status"] != "completed":
             return error_response(
                 409,
@@ -130,7 +157,9 @@ def create_app(worker, shutdown_event, transport_state):
 
         updated_job, result_bytes = worker.consume_result(job_id)
         if not updated_job:
-            return error_response(404, "job_not_found", "The requested scan job was not found.")
+            return error_response(
+                404, "job_not_found", "The requested scan job was not found."
+            )
         if not result_bytes:
             return error_response(
                 410,
@@ -149,7 +178,17 @@ def create_app(worker, shutdown_event, transport_state):
     def internal_protocol_scan():
         data = request.get_json(silent=True) or {}
         if data.get("action", "scan") != "scan":
-            return jsonify({"error": {"code": "unsupported_action", "message": "Only scan actions are supported."}}), 400
+            return (
+                jsonify(
+                    {
+                        "error": {
+                            "code": "unsupported_action",
+                            "message": "Only scan actions are supported.",
+                        }
+                    }
+                ),
+                400,
+            )
 
         try:
             job = worker.submit_job(
@@ -201,8 +240,13 @@ class LoopbackServer(threading.Thread):
         self.started = threading.Event()
         self.error = None
 
+    def _select_context(self, connection, server_name, initial_context):
+        connection.context = self.ssl_context
+
     def run(self):
         try:
+            if self.ssl_context is not None:
+                self.ssl_context.sni_callback = self._select_context
             self.httpd = make_server(
                 self.host,
                 self.port,
@@ -213,7 +257,13 @@ class LoopbackServer(threading.Thread):
             logger.info("%s listener ready on %s:%s", self.label, self.host, self.port)
         except Exception as exc:
             self.error = exc
-            logger.error("Failed to start %s listener on %s:%s: %s", self.label, self.host, self.port, exc)
+            logger.error(
+                "Failed to start %s listener on %s:%s: %s",
+                self.label,
+                self.host,
+                self.port,
+                exc,
+            )
             self.started.set()
             return
 
@@ -230,54 +280,77 @@ class LoopbackServer(threading.Thread):
             self.httpd.shutdown()
 
 
-def run_server(worker, shutdown_event):
+def run_server(worker, shutdown_event, https_retry_event=None, on_https_error=None):
+    retry = https_retry_event or threading.Event()
     transport_state = {
         "http_enabled": False,
         "https_enabled": False,
+        "https_setup": "preparing",
     }
     app = create_app(worker, shutdown_event, transport_state)
-
     listeners = []
-
     http_listener = LoopbackServer(app, HTTP_HOST, HTTP_PORT, label="HTTP")
     http_listener.start()
     http_listener.started.wait(timeout=5)
-    if not http_listener.error:
+    if not http_listener.error and http_listener.started.is_set():
         transport_state["http_enabled"] = True
         listeners.append(http_listener)
 
-    ssl_context = get_ssl_context(log_errors=False)
-    if ssl_context:
-        https_listener = LoopbackServer(
-            app,
-            HTTP_HOST,
-            HTTPS_PORT,
-            ssl_context=ssl_context,
-            label="HTTPS",
-        )
-        https_listener.start()
-        https_listener.started.wait(timeout=5)
-        if not https_listener.error:
-            transport_state["https_enabled"] = True
-            listeners.append(https_listener)
-    else:
-        logger.info("HTTPS listener disabled because no valid localhost certificates were found")
-
-    if not listeners:
-        logger.error("No loopback listener could be started; stopping ScanLink")
-        shutdown_event.set()
-        return
-
-    logger.info(
-        "Loopback server state: http_enabled=%s https_enabled=%s",
-        transport_state["http_enabled"],
-        transport_state["https_enabled"],
-    )
-
-    while not shutdown_event.wait(0.5):
-        pass
-
-    for listener in listeners:
-        listener.shutdown()
-    for listener in listeners:
-        listener.join(timeout=5)
+    https_listener = None
+    next_check = 0
+    report_failure = True
+    try:
+        while not shutdown_event.is_set():
+            if retry.is_set():
+                retry.clear()
+                next_check = 0
+                report_failure = True
+            if time.monotonic() >= next_check:
+                try:
+                    transport_state["https_setup"] = "preparing"
+                    if not ensure_ssl_certificates(generate_if_missing=True):
+                        raise RuntimeError("Certificate setup failed")
+                    context = get_ssl_context()
+                    if context is None:
+                        raise RuntimeError("Certificate trust could not be verified")
+                    if https_listener is None:
+                        candidate = LoopbackServer(
+                            app,
+                            HTTP_HOST,
+                            HTTPS_PORT,
+                            ssl_context=context,
+                            label="HTTPS",
+                        )
+                        candidate.start()
+                        candidate.started.wait(timeout=5)
+                        if candidate.error or not candidate.started.is_set():
+                            raise RuntimeError("Secure connection could not be started")
+                        https_listener = candidate
+                        listeners.append(candidate)
+                    else:
+                        # New accepted connections use the renewed identity; active scans continue.
+                        https_listener.ssl_context = context
+                    with socket.create_connection(
+                        (HTTP_HOST, HTTPS_PORT), timeout=3
+                    ) as connection:
+                        with ssl.create_default_context().wrap_socket(
+                            connection, server_hostname="localhost"
+                        ):
+                            pass
+                    transport_state.update(https_enabled=True, https_setup="ready")
+                    next_check = time.monotonic() + 3600
+                except Exception:
+                    logger.exception("Automatic HTTPS setup failed")
+                    transport_state["https_setup"] = "failed"
+                    next_check = time.monotonic() + 3600
+                    if report_failure and on_https_error:
+                        on_https_error()
+                report_failure = False
+            if not listeners:
+                shutdown_event.set()
+            shutdown_event.wait(0.5)
+    finally:
+        for listener in listeners:
+            listener.shutdown()
+        for listener in listeners:
+            listener.join(timeout=5)
