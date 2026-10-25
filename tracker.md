@@ -9,6 +9,7 @@
 - Paired with DjangoLux 1.15.1b1 (`1.15/scanlink_https`); REST remains compatible with older clients. New optional health field `https_setup` = preparing/ready/failed.
 
 ### Adopted Standards & Rules
+- Owner decision 2026-10-25: the next ScanLink beta targets 0.8.0b1, incorporating any findings from further paired-beta/hardware stress testing. Keep published 0.7.5b1 unchanged; start follow-up implementation on a fresh 0.8 workstream from verified main.
 - One patch/workstream per release-line branch; VERSION is the version source. Do not tag or publish without owner approval.
 - App data/config/logs live under `%LOCALAPPDATA%\ScanLink`; identity pointer is `https/active.json`, immutable bundles `https/<id>/`, superseded identities `.xclude/https/<id>/`.
 - Certificate covers only localhost/127.0.0.1/::1, CA=False/serverAuth/no certificate-signing usage; no downloaded/shared CA or machine-wide trust. Existing mkcert credentials stay untouched.
