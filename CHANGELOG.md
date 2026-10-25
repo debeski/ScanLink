@@ -4,6 +4,8 @@ This file owns the release history for `ScanLink`.
 
 ## v0.7.5b1
 
+- **Windows x86 Crypto Wheels**: Resolve cryptography from compatible binary wheels during executable builds, avoiding an unsupported latest-source Rust/OpenSSL compilation on 32-bit Python.
+
 - **Windows First-Launch Consent Gate**: Exercise the specific ScanLink certificate Yes prompt in installed-app tests instead of bypassing trust; stress 120 normally verified HTTPS requests per architecture and log certificate setup stages.
 
 - **Beta Publication**: Mark beta/RC tags as GitHub prereleases and keep the stable latest pointer unchanged.

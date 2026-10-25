@@ -220,3 +220,7 @@ installed ScanLink executable and naming `ScanLink localhost`. It does not
 preinstall a certificate or disable verification. It then sends 120 HTTPS
 requests in batches of 12 before checking restart reuse. Stage logging pinpoints
 blocked setup without showing private key material.
+
+The build wrapper requires a binary cryptography wheel. Pip selects the newest
+compatible wheel per Python architecture instead of attempting a source build
+of a newer release that no longer publishes Windows x86 wheels.

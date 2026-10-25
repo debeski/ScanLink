@@ -72,7 +72,7 @@ def ensure_venv(arch, base_python):
     if os.path.exists(REQUIREMENTS_FILE):
         print(f"Installing requirements into {arch} venv ...")
         subprocess.run(
-            [python_exe, "-m", "pip", "install", "--quiet", "-r", REQUIREMENTS_FILE],
+            [python_exe, "-m", "pip", "install", "--quiet", "--only-binary=cryptography", "-r", REQUIREMENTS_FILE],
             check=True,
         )
         print(f"{arch} requirements installed.")
