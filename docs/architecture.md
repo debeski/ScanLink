@@ -217,3 +217,13 @@ the first enabled deadline terminates the child, even if it keeps reporting
 progress. Idle timeout remains an independent progress guard. Downloading frees
 the PDF immediately and retains consumed-job metadata until the normal job TTL,
 so repeated or racing downloads report `410` while that metadata exists.
+
+## 0.8.0b1 release acceptance
+
+The published x64/x86 installers passed Windows CI and release gates, including
+the native certificate consent prompt, 120 normally verified HTTPS requests per
+architecture and identity reuse after restart. Published installer digests were
+checked through the development project's authenticated distribution endpoints.
+The real worker also passed file-field/PDF-editor compatibility with published
+DjangoLux 1.15.1b1. Scanner hardware was simulated for local job tests; physical
+TWAIN and native browser/enterprise-policy acceptance remain separate checks.
