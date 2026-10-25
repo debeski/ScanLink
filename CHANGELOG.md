@@ -2,6 +2,15 @@
 
 This file owns the release history for `ScanLink`.
 
+## v0.8.0b1
+
+- **Atomic PDF Completion**: Keep child completion provisional until the process exits and the parent stores result bytes; publish terminal errors with their details.
+- **Parent Scan Deadline**: Enforce the configured scan deadline even when the child keeps reporting progress, independently of GUI and idle limits.
+- **Scan Payload Validation**: Reject non-object JSON, invalid metadata/callback types and non-JSON protocol requests before queueing hardware work.
+- **Single-Use Result Metadata**: Free consumed PDF bytes immediately while retaining job metadata until its TTL so racing downloads consistently receive 410.
+- **One Scan POST Per Attempt**: Negotiate transport through health checks and report `scan_request_uncertain` after a lost scan response instead of resubmitting over another transport.
+- **Real Worker Regressions**: Exercise actual child-process completion, parent timeout enforcement, malformed requests and competing PDF downloads with only the scanner child simulated.
+
 ## v0.7.5b1
 
 - **Windows x86 Crypto Wheels**: Resolve cryptography from compatible binary wheels during executable builds, avoiding an unsupported latest-source Rust/OpenSSL compilation on 32-bit Python.

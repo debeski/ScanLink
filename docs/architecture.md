@@ -204,3 +204,16 @@ When launched with a `scanlink://` URL:
 4. If no instance is running, the new process becomes the tray instance and queues the protocol scan after startup.
 
 This prevents duplicate tray apps and competing scanner sessions.
+
+## Worker completion and deadlines
+
+Child progress is provisional. A child `completed` update remains
+`generating_pdf` to API clients until the process exits and the parent stores the
+PDF atomically with the final `completed` status. Child failure states are also
+published by the parent with their error details after process exit.
+
+The parent enforces both `scan_timeout_seconds` and `gui_task_timeout_seconds`;
+the first enabled deadline terminates the child, even if it keeps reporting
+progress. Idle timeout remains an independent progress guard. Downloading frees
+the PDF immediately and retains consumed-job metadata until the normal job TTL,
+so repeated or racing downloads report `410` while that metadata exists.

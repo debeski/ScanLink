@@ -215,3 +215,12 @@ HTTP remains available during setup; clients should not block working HTTP
 scans while waiting for HTTPS. A native Retry dialog and tray repair action
 handle failed setup without a command prompt. See the architecture guide for
 DPAPI-protected keys, trust verification, hourly checks and renewal.
+
+### Lost scan responses
+
+The JavaScript client health-checks a transport before scanning and never
+automatically retries a scan POST. Handle `scan_request_uncertain` by asking the
+operator to check the tray app before starting another scan. A lost response can
+mean the request was accepted; retrying automatically could trigger another
+scanner dialog. Both public and protocol scan endpoints require a JSON object
+and validate metadata/callback types before queueing hardware work.
