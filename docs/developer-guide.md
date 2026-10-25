@@ -21,7 +21,7 @@ Typical flow:
 The local API listens on:
 
 - `http://127.0.0.1:5000`
-- `https://127.0.0.1:5443` when trusted localhost certificates are available
+- `https://127.0.0.1:5443` after automatic per-user Windows certificate setup
 
 The bundled `static/scanlink.js` helper tries HTTPS first and falls back to HTTP.
 
@@ -205,3 +205,13 @@ Downloading `/scan/<job_id>/result` consumes the stored PDF. A second download f
 - [API Reference](api.md)
 - [Architecture](architecture.md)
 - [Building and Release](building.md)
+
+## Automatic HTTPS status
+
+Normal startup provisions trusted localhost HTTPS in the background. Operators
+only install, open ScanLink and approve any required Windows/browser prompt.
+`GET /health` includes `https_setup`: `preparing`, `ready`, or `failed`.
+HTTP remains available during setup; clients should not block working HTTP
+scans while waiting for HTTPS. A native Retry dialog and tray repair action
+handle failed setup without a command prompt. See the architecture guide for
+DPAPI-protected keys, trust verification, hourly checks and renewal.

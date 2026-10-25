@@ -8,7 +8,7 @@ This guide covers local development, executable builds, and installer builds.
 - Python 3.10+
 - TWAIN-compatible scanner and driver for real scan testing
 - Inno Setup for installer builds
-- Optional: `mkcert.exe` in the project root for trusted localhost HTTPS support
+- `cryptography` (installed by requirements/build helper); Windows CryptoAPI and DPAPI are built into Windows
 
 Install Python dependencies:
 
@@ -22,7 +22,7 @@ Run from source:
 python main.py
 ```
 
-Generate trusted localhost certificates and exit:
+Normal startup provisions and renews trusted localhost HTTPS automatically. For support/development only, provision the identity and exit:
 
 ```powershell
 python main.py --generate-ssl
@@ -43,7 +43,7 @@ After each x86/x64 installer is compiled in GitHub Actions,
 `tests/windows_install_smoke.ps1` silently installs it on the Windows runner and
 checks installed assets, the Start menu shortcut, HKCU startup and `scanlink://`
 registration, packaged version/architecture, live REST responses, protocol
-launch, and graceful shutdown.
+launch, normal Windows-verified HTTPS, identity reuse after restart, and graceful shutdown. No certificate verification bypass is used.
 
 ## Icon Generation
 

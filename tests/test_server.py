@@ -1,6 +1,8 @@
 import threading
+import json
+from urllib.request import urlopen
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from worker import BusyError
 
@@ -50,11 +52,7 @@ class FakeWorker:
         if not job:
             return None
 
-        return {
-            key: value
-            for key, value in job.items()
-            if key != "result_bytes"
-        }
+        return {key: value for key, value in job.items() if key != "result_bytes"}
 
     def consume_result(self, job_id):
         job = self.jobs.get(job_id)
@@ -72,9 +70,13 @@ class ServerTests(unittest.TestCase):
         self.worker = FakeWorker()
         self.transport_state = {"http_enabled": True, "https_enabled": False}
         self.shutdown_event = threading.Event()
-        self.config_patch = patch("server.load_config", return_value={"cors_origins": ["*"]})
+        self.config_patch = patch(
+            "server.load_config", return_value={"cors_origins": ["*"]}
+        )
         self.config_patch.start()
-        self.app = server.create_app(self.worker, self.shutdown_event, self.transport_state)
+        self.app = server.create_app(
+            self.worker, self.shutdown_event, self.transport_state
+        )
         self.client = self.app.test_client()
 
     def tearDown(self):
@@ -92,6 +94,78 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(payload["arch"], server.APP_ARCH)
         self.assertFalse(payload["busy"])
         self.assertTrue(payload["twain_available"])
+
+    def test_certificate_setup_failure_keeps_http_available_and_reports_failure(self):
+        failed = threading.Event()
+        listeners = []
+        original_listener = server.LoopbackServer
+
+        def create_listener(app, host, port, **options):
+            listener = original_listener(app, host, 0, **options)
+            listeners.append(listener)
+            return listener
+
+        with patch("server.LoopbackServer", side_effect=create_listener), patch(
+            "server.ensure_ssl_certificates", return_value=False
+        ):
+            manager = threading.Thread(
+                target=server.run_server,
+                args=(self.worker, self.shutdown_event, threading.Event(), failed.set),
+            )
+            manager.start()
+            try:
+                self.assertTrue(failed.wait(5))
+                port = listeners[0].httpd.server_port
+                with urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as response:
+                    health = json.load(response)
+                self.assertTrue(health["http_enabled"])
+                self.assertFalse(health["https_enabled"])
+                self.assertEqual(health["https_setup"], "failed")
+                self.assertTrue(manager.is_alive())
+            finally:
+                self.shutdown_event.set()
+                manager.join(5)
+            self.assertFalse(manager.is_alive())
+
+    def test_retry_enables_https_after_a_failed_first_attempt(self):
+        retry = threading.Event()
+        observations = []
+        listeners = []
+        shutdown = threading.Event()
+
+        def listener_factory(app, *args, **kwargs):
+            listener = MagicMock()
+            listener.app = app
+            listener.error = None
+            listener.started.is_set.return_value = True
+            listeners.append(listener)
+            return listener
+
+        def next_cycle(timeout):
+            health = listeners[0].app.test_client().get("/health").get_json()
+            observations.append(health["https_setup"])
+            if len(observations) == 1:
+                self.assertTrue(health["http_enabled"])
+                self.assertFalse(health["https_enabled"])
+                retry.set()
+            else:
+                self.assertTrue(health["https_enabled"])
+                shutdown.set()
+
+        with patch("server.LoopbackServer", side_effect=listener_factory), patch(
+            "server.ensure_ssl_certificates", side_effect=[False, True]
+        ), patch("server.get_ssl_context", return_value=MagicMock()), patch(
+            "server.socket.create_connection"
+        ), patch(
+            "server.ssl.create_default_context"
+        ), patch.object(
+            shutdown, "wait", side_effect=next_cycle
+        ):
+            server.run_server(self.worker, shutdown, retry)
+        self.assertEqual(observations, ["failed", "ready"])
+        self.assertEqual(len(listeners), 2)
+        for listener in listeners:
+            listener.shutdown.assert_called_once()
 
     def test_scan_request_maps_browser_payload_to_job(self):
         response = self.client.post(
@@ -148,7 +222,9 @@ class ServerTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.headers["Access-Control-Allow-Origin"], "http://localhost:82")
+        self.assertEqual(
+            response.headers["Access-Control-Allow-Origin"], "http://localhost:82"
+        )
 
     def test_result_endpoint_returns_pdf(self):
         self.worker.jobs["job-123"] = {
@@ -200,7 +276,9 @@ class ServerTests(unittest.TestCase):
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 410)
-        self.assertEqual(second_response.get_json()["error"]["code"], "result_unavailable")
+        self.assertEqual(
+            second_response.get_json()["error"]["code"], "result_unavailable"
+        )
 
     def test_protocol_endpoint_queues_protocol_job(self):
         response = self.client.post(

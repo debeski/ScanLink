@@ -110,6 +110,20 @@ try {
     if (!$health.http_enabled) {
         throw "Installed ScanLink did not enable its HTTP listener."
     }
+    $secureDeadline = [DateTime]::UtcNow.AddSeconds(45)
+    while (!$health.https_enabled -and [DateTime]::UtcNow -lt $secureDeadline) {
+        if ($health.https_setup -eq "failed") { throw "Automatic HTTPS setup failed." }
+        Start-Sleep -Milliseconds 500
+        $health = Invoke-RestMethod -Uri $healthUri -TimeoutSec 3
+    }
+    if (!$health.https_enabled -or $health.https_setup -ne "ready") {
+        throw "Automatic HTTPS setup did not finish."
+    }
+    # Use normal Windows TLS verification: no trust bypass or certificate CLI.
+    $secureHealth = Invoke-RestMethod -Uri "https://localhost:5443/health" -TimeoutSec 5
+    if ($secureHealth.version -ne $version) { throw "Trusted HTTPS returned the wrong version." }
+    $identityPath = Join-Path $env:LOCALAPPDATA "ScanLink\https\active.json"
+    $firstIdentity = (Get-Content $identityPath -Raw | ConvertFrom-Json).identity
     if ($health.busy) {
         throw "Freshly installed ScanLink unexpectedly reports itself busy."
     }
@@ -147,6 +161,22 @@ try {
     if (!$appProcess.WaitForExit(15000)) {
         throw "Installed ScanLink did not exit cleanly after shutdown."
     }
+    $appProcess = Start-Process -FilePath $appExe -PassThru
+    $restartDeadline = [DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds)
+    $restarted = $false
+    while ([DateTime]::UtcNow -lt $restartDeadline) {
+        try {
+            $secureHealth = Invoke-RestMethod -Uri "https://localhost:5443/health" -TimeoutSec 3
+            if ($secureHealth.https_setup -eq "ready") { $restarted = $true; break }
+        } catch {}
+        Start-Sleep -Milliseconds 500
+    }
+    if (!$restarted) { throw "Trusted HTTPS did not recover after restart." }
+    $secondIdentity = (Get-Content $identityPath -Raw | ConvertFrom-Json).identity
+    if ($firstIdentity -ne $secondIdentity) { throw "Restart unnecessarily replaced the HTTPS identity." }
+    $null = Invoke-RestMethod -Uri "http://127.0.0.1:5000/shutdown" -Method Post -TimeoutSec 3
+    if (!$appProcess.WaitForExit(15000)) { throw "Restarted ScanLink did not exit cleanly." }
+
 } catch {
     if (Test-Path $logPath) {
         Write-Host "---- ScanLink log ----"

@@ -96,10 +96,11 @@ def format_color_mode(value):
 
 
 class TrayApp:
-    def __init__(self, worker, shutdown_event):
+    def __init__(self, worker, shutdown_event, https_retry_event=None):
         self.worker = worker
         self.shutdown_event = shutdown_event
         self.icon = None
+        self.https_retry_event = https_retry_event or threading.Event()
 
     def create_image(self):
         icon_path = get_resource_path("app_icon.ico")
@@ -282,11 +283,12 @@ class TrayApp:
                 enabled=False,
             ),
             MenuItem(
-                lambda item: "HTTPS: Enabled" if is_ssl_available() else "HTTPS: Disabled",
+                lambda item: "Secure connection: configured" if is_ssl_available() else "Secure connection: setup needed",
                 None,
                 enabled=False,
             ),
             Menu.SEPARATOR,
+            MenuItem("Retry secure connection setup", lambda icon, item: self.https_retry_event.set()),
             MenuItem("Test Scan", on_test_scan, enabled=lambda item: not self.worker.is_busy()),
             MenuItem(
                 lambda item: f"Source: {format_scan_source(load_config().get('scan_source'))}",
