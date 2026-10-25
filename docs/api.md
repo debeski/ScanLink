@@ -208,7 +208,7 @@ Allowed origins come from `%LOCALAPPDATA%\ScanLink\config.json`:
 
 When `cors_origins` is not `["*"]`, the request `Origin` must exactly match an entry in the list.
 
-## Automatic HTTPS setup status (0.7.5)
+## Automatic HTTPS setup status (0.7.5b1)
 
 `GET /health` adds `https_setup`: `preparing` while background certificate setup
 runs, `ready` after trusted HTTPS starts, and `failed` after a setup/listener

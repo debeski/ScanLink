@@ -206,3 +206,11 @@ Open a protocol link:
 ```powershell
 Start-Process "scanlink://scan?docId=DOC-123"
 ```
+
+## Beta installers
+
+A beta tag such as `v0.7.5b1` must match VERSION and the changelog section.
+The release workflow publishes both architecture installers as a GitHub
+prerelease and leaves the stable latest release unchanged. Run the Windows
+unit/build/installed-app gates through the PR before tagging; publication also
+runs those gates. Paired DjangoLux 1.15.1b1 accepts these version identifiers.
