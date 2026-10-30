@@ -214,7 +214,11 @@ published by the parent with their error details after process exit.
 
 The parent enforces both `scan_timeout_seconds` and `gui_task_timeout_seconds`;
 the first enabled deadline terminates the child, even if it keeps reporting
-progress. Idle timeout remains an independent progress guard. Downloading frees
+progress. The scan deadline includes a 15-second grace (`SCAN_TIMEOUT_GRACE_SECONDS`
+in `worker.py`) covering child startup, so a child that honours its own
+`scan_timeout_seconds` closes the TWAIN source and reports its error before the
+parent force-terminates it. Unparseable callback URLs are skipped without
+affecting the stored PDF. Idle timeout remains an independent progress guard. Downloading frees
 the PDF immediately and retains consumed-job metadata until the normal job TTL,
 so repeated or racing downloads report `410` while that metadata exists.
 

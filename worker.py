@@ -22,6 +22,8 @@ from utils import get_logger, load_config
 logger = get_logger()
 
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "timed_out"}
+# Covers child startup and a graceful TWAIN close after the child's own deadline.
+SCAN_TIMEOUT_GRACE_SECONDS = 15
 
 # Optional compatibility hook for future push-based status updates.
 _status_callback = None
@@ -76,6 +78,7 @@ class ScanWorker(threading.Thread):
         self.scan_timeout_seconds = int(config.get("scan_timeout_seconds", 600))
         self.gui_task_timeout_seconds = int(config.get("gui_task_timeout_seconds", 900))
         self.scan_idle_timeout_seconds = int(config.get("scan_idle_timeout_seconds", 45))
+        self.scan_timeout_grace_seconds = SCAN_TIMEOUT_GRACE_SECONDS
 
     def submit_job(self, doc_id=None, callback_url=None, metadata=None, source="api"):
         with self.jobs_lock:
@@ -260,6 +263,17 @@ class ScanWorker(threading.Thread):
         last_progress_at = started_at
         last_state_signature = None
         last_state_status = None
+        kill_limits = [
+            limit
+            for limit in (
+                self.scan_timeout_seconds + self.scan_timeout_grace_seconds
+                if self.scan_timeout_seconds > 0
+                else 0,
+                self.gui_task_timeout_seconds,
+            )
+            if limit > 0
+        ]
+        kill_after = min(kill_limits) if kill_limits else None
 
         request_payload = {
             "job_id": job_id,
@@ -304,10 +318,7 @@ class ScanWorker(threading.Thread):
                     break
 
                 now = time.monotonic()
-                if any(
-                    limit > 0 and now - started_at >= limit
-                    for limit in (self.scan_timeout_seconds, self.gui_task_timeout_seconds)
-                ):
+                if kill_after is not None and now - started_at >= kill_after:
                     self._terminate_scan_process(process)
                     raise ScanProcessTimeoutError(
                         "scan_timeout",
@@ -391,8 +402,11 @@ class ScanWorker(threading.Thread):
             logger.warning("requests is not installed; skipping callback delivery for job %s", job["job_id"])
             return
 
-        parsed = urlparse(callback_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        try:
+            parsed = urlparse(callback_url)
+        except ValueError:
+            parsed = None
+        if not parsed or parsed.scheme not in {"http", "https"} or not parsed.netloc:
             logger.warning("Skipping callback for job %s because callback_url is not absolute: %s", job["job_id"], callback_url)
             return
 

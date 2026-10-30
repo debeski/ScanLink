@@ -2,6 +2,12 @@
 
 This file owns the release history for `ScanLink`.
 
+## v0.8.0b2
+
+- **Scan Deadline Grace**: `ScanWorker` adds `SCAN_TIMEOUT_GRACE_SECONDS` (15s) to the parent's `scan_timeout_seconds` kill limit so the child's own deadline closes TWAIN and reports its error before forced termination; `gui_task_timeout_seconds` is unchanged.
+- **Callback URL Parsing**: `_send_callback` skips URLs that `urlparse` rejects instead of raising after completion.
+- **Per-Scan Transport Check**: `scanlink.js` `startScan()` health-checks before every scan POST, falling back from a stale preferred transport and reporting `helper_unavailable`/`insecure_origin` instead of `scan_request_uncertain` when the helper is unreachable.
+
 ## v0.8.0b1
 
 - **Atomic PDF Completion**: Keep child completion provisional until the process exits and the parent stores result bytes; publish terminal errors with their details.

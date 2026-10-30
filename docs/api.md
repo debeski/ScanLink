@@ -222,7 +222,9 @@ on older helpers. Existing HTTP scan jobs remain usable while setup runs.
 
 ## Browser transport retries
 
-The bundled JavaScript client negotiates a healthy transport before its first scan.
+The bundled JavaScript client re-negotiates a healthy transport through `/health`
+before every scan, so a lost transport is reported as `helper_unavailable` or
+`insecure_origin` and a stale preferred transport falls back before the POST.
 A scan POST is sent once on that transport. If the response or its body is lost,
 it rejects with `scan_request_uncertain` instead of resending the request over
 the other transport; the helper may already be scanning. Check ScanLink before
