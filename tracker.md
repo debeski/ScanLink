@@ -24,7 +24,9 @@
 - Callbacks are never delivered (since 36249b6, 2026-04-28): `_process_job` passes the serialized job, which omits `callback_url`, to `_send_callback`. Docs promise delivery; enabling it changes production behavior and needs an owner decision.
 
 ### Active & Pending Tasks
-- [ ] 0.8.0b2 on `0.8/stress_followups` (from origin/main + the two unmerged 0.8/stress_fixes docs commits): 15s parent scan-deadline grace, callback parse guard, per-scan `/health` in `scanlink.js`. Committed locally, not pushed; needs Windows CI and a PR. Mirror the per-scan health check in DjangoLux `scan_button.js` if it shares the stale-transport logic. Retire `0.8/stress_fixes` once this merges.
+- [x] 0.8.0b2 merged to main via PR3 (063269b, 2026-10-30; CI 3/3 PASS): 15s parent scan-deadline grace, callback parse guard, per-scan `/health` in `scanlink.js`. Untagged; tagging/publishing needs owner OK.
+- [ ] Mirror the per-scan health check in DjangoLux `scan_button.js` if it shares the stale-transport logic.
+- [x] 2026-10-30: retired `0.7/automatic_https`, `0.8/stress_fixes`, `0.8/stress_followups` (checkouts removed, branches deleted locally/GitHub; leftovers in `.xclude/retired-worktrees/2026-10-30/`). Only `main` remains.
 - [x] Paired deeper stress and real-worker regressions pass; candidate0.8.0b1 prepared locally. Owner authorized next beta; PR2 merged after x86/x64 native CI PASS, release gates PASS, both installers published.
 - [x] Windows x64/x86 installed-app gates and normally verified HTTPS load passed before and during beta publication; stable Latest preserved.
 - [ ] Verify0.8.0b1 with target scanner hardware; preserve ADF/front/200 DPI/color/paper protection off defaults.
@@ -38,7 +40,7 @@
 ### Validation & Docs Log
 - 2026-10-30: 0.8.0b2 changes, macOS: 42 unit tests OK/1 Windows skip (scratch venv). New grace/callback tests fail on 0.8.0b1 code; Node harness for `scanlink.js` 4/4 (old: 2/4). Docs: api/architecture/developer guide, CHANGELOG v0.8.0b2, VERSION 0.8.0b2. Windows/native gates not run.
 - 2026-10-25: 40 local unit tests OK/1 Windows skip; Windows CI/release PASS x64+x86 including consent/120 HTTPS/restart; pairedJS24 PASS; real worker1000 health (500 verified TLS)/100 hashed PDFs/50 busy/40 result races PASS; timeouts/crash/cancel/callback/shutdown recovery PASS.8097 UI300 health/30 scans/20 simultaneous, PDF save/Arabic lost-response guidance/one POST PASS. Dlux3064 OK/6skips +79 focused; doctor0error. Native candidate gates now PASS; physical hardware/Windows browser policies unverified.
-- 2026-10-25: API/architecture/developer guide, VERSION0.8.0b1 and CHANGELOG document parent-owned completion, hard deadline, strict payloads, retained metadata and scan_request_uncertain. Local report `.xclude/validation/paired-stress-2026-10-25.md`.
+- 2026-10-25: API/architecture/developer guide, VERSION0.8.0b1 and CHANGELOG document parent-owned completion, hard deadline, strict payloads, retained metadata and scan_request_uncertain. Local report `.xclude/retired-worktrees/2026-10-30/stress_fixes/.xclude/validation/paired-stress-2026-10-25.md`.
 
 ## Part 2: Global & Handoff
 ### Global Helpers & Rules
@@ -46,5 +48,5 @@
 - Test stacks belong under `~/Desktop/depy/testbed-*`, use Composer `--dev` and application admin/db123123; preserve testbed-dlux.
 ### Agent Handoff
 - Both patch checkouts are authorized by the owner from the app-mock-pdf chat; preserve that checkout's unrelated uncommitted changes.
-- 2026-10-26: PR15 bypass explicitly authorized;1.15.1b2 published/accepted with0.8.0b1.8097 keeps60 records, full backup IB-esVxV and fixture60 now9 pages/8 history versions. Helper stopped;8088/8096 and app-mock-pdf preserved. Physical TWAIN/native browser-policy acceptance remains manual. Report `.xclude/validation/beta-release-080-1151b2.md`.
-- Evidence: `.xclude/validation/`; paired Chrome evidence is in `pkg-django-lux/scanlink_https/.xclude/validation/chrome-loopback.log`.
+- 2026-10-26: PR15 bypass explicitly authorized;1.15.1b2 published/accepted with0.8.0b1.8097 keeps60 records, full backup IB-esVxV and fixture60 now9 pages/8 history versions. Helper stopped;8088/8096 and app-mock-pdf preserved. Physical TWAIN/native browser-policy acceptance remains manual. Report `.xclude/retired-worktrees/2026-10-30/stress_fixes/.xclude/validation/beta-release-080-1151b2.md`.
+- Evidence: `.xclude/retired-worktrees/2026-10-30/<checkout>/.xclude/validation/` (automatic_https, stress_fixes); paired Chrome evidence is in `pkg-django-lux/scanlink_https/.xclude/validation/chrome-loopback.log`.
