@@ -218,7 +218,7 @@ DPAPI-protected keys, trust verification, hourly checks and renewal.
 
 ### Lost scan responses
 
-The JavaScript client health-checks a transport before scanning and never
+The JavaScript client health-checks a transport before every scan and never
 automatically retries a scan POST. Handle `scan_request_uncertain` by asking the
 operator to check the tray app before starting another scan. A lost response can
 mean the request was accepted; retrying automatically could trigger another

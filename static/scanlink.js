@@ -86,7 +86,8 @@ class ScanLink {
         if (options.metadata && typeof options.metadata === "object") payload.metadata = options.metadata;
 
         try {
-            if (!this.preferredUrl && !await this.checkHealth()) {
+            // Re-negotiate every scan so a lost transport is reported before the single POST.
+            if (!await this.checkHealth()) {
                 throw this.connectionError;
             }
             const response = await this._fetchResponse("/scan", {

@@ -214,6 +214,27 @@ published by the parent with their error details after process exit.
 
 The parent enforces both `scan_timeout_seconds` and `gui_task_timeout_seconds`;
 the first enabled deadline terminates the child, even if it keeps reporting
-progress. Idle timeout remains an independent progress guard. Downloading frees
+progress. The scan deadline includes a 15-second grace (`SCAN_TIMEOUT_GRACE_SECONDS`
+in `worker.py`) covering child startup, so a child that honours its own
+`scan_timeout_seconds` closes the TWAIN source and reports its error before the
+parent force-terminates it. Unparseable callback URLs are skipped without
+affecting the stored PDF. Idle timeout remains an independent progress guard. Downloading frees
 the PDF immediately and retains consumed-job metadata until the normal job TTL,
 so repeated or racing downloads report `410` while that metadata exists.
+
+## 0.8.0b1 release acceptance
+
+The published x64/x86 installers passed Windows CI and release gates, including
+the native certificate consent prompt, 120 normally verified HTTPS requests per
+architecture and identity reuse after restart. Published installer digests were
+checked through the development project's authenticated distribution endpoints.
+The real worker also passed file-field/PDF-editor compatibility with published
+DjangoLux 1.15.1b1. Scanner hardware was simulated for local job tests; physical
+TWAIN and native browser/enterprise-policy acceptance remain separate checks.
+
+The paired published DjangoLux 1.15.1b2 acceptance passed on 2026-10-26:
+Composer upgrade with full backup, 694 package hashes in web/Celery, published
+client/templates, 300 health checks, 30 scans, 20-way contention, PDF save/download
+and Arabic lost-response guidance with one accepted scan POST. Both installer
+distribution hashes matched. The helper was stopped; physical scanner acceptance
+remains outstanding.

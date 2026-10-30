@@ -20,6 +20,19 @@ if scenario == "heartbeat":
     for count in range(100):
         state("page_scanned", page_count=count)
         time.sleep(0.1)
+elif scenario == "graceful_timeout":
+    request = json.loads((directory / "request.json").read_text())
+    deadline = time.monotonic() + request["scan_timeout_seconds"]
+    count = 0
+    while time.monotonic() <= deadline:
+        count += 1
+        state("page_scanned", page_count=count)
+        time.sleep(0.1)
+    state(
+        "timed_out",
+        error={"code": "scan_timeout", "message": "Child closed the scanner."},
+    )
+    sys.exit(2)
 else:
     (directory / "result.pdf").write_bytes(b"%PDF-1.4\nregression\n")
     state("completed", page_count=1)

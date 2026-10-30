@@ -76,12 +76,21 @@ class RealWorkerRegressions(unittest.TestCase):
     def test_parent_scan_deadline_applies_despite_child_progress(self):
         self.scenario = "heartbeat"
         self.worker.scan_timeout_seconds = 1
+        self.worker.scan_timeout_grace_seconds = 0
         self.worker.gui_task_timeout_seconds = 3
         started = time.monotonic()
         job = self.finish(self.client.post("/scan", json={}).get_json()["job_id"])
         self.assertEqual(job["status"], "timed_out")
         self.assertEqual(job["error"]["code"], "scan_timeout")
         self.assertLess(time.monotonic() - started, 2)
+
+    def test_child_reports_its_own_timeout_within_parent_grace(self):
+        self.scenario = "graceful_timeout"
+        self.worker.scan_timeout_seconds = 1
+        self.worker.scan_timeout_grace_seconds = 3
+        job = self.finish(self.client.post("/scan", json={}).get_json()["job_id"])
+        self.assertEqual(job["status"], "timed_out")
+        self.assertEqual(job["error"]["message"], "Child closed the scanner.")
 
     def test_parallel_result_downloads_consume_pdf_once(self):
         job_id = self.client.post("/scan", json={}).get_json()["job_id"]

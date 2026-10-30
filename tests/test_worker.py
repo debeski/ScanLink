@@ -2,6 +2,7 @@ import io
 import queue
 import time
 import unittest
+from unittest.mock import patch
 
 from worker import BusyError, ScanWorker
 
@@ -74,6 +75,12 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(worker.get_job("job-1")["status"], "completed")
         worker.job_ttl_seconds = 0
         self.assertIsNone(worker.get_job("job-1"))
+
+    def test_unparseable_callback_is_skipped(self):
+        worker = ScanWorker(queue.Queue())
+        with patch("worker.requests") as requests:
+            worker._send_callback({"job_id": "job-1", "callback_url": "http://["}, b"pdf")
+        requests.post.assert_not_called()
 
 
 if __name__ == "__main__":
