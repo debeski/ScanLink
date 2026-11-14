@@ -26,7 +26,9 @@ Errors use this shape:
 }
 ```
 
-Some errors include extra fields such as `active_job_id` or `current_status`.
+Some errors include extra fields such as `active_job_id` or `current_status`. Protocol-level errors (unknown route `404`, wrong method `405`, oversized body `413`, internal error `500`) use the same shape, with CORS headers on browser endpoints.
+
+Request bodies are limited to 64 KB.
 
 ## GET /health
 
@@ -90,6 +92,7 @@ Errors:
 | 400 | `invalid_callback` | Callback URL was not a string or could not be parsed. |
 | 400 | `invalid_metadata` | `metadata` was provided but is not an object. |
 | 409 | `busy` | Another scan job is queued or running. |
+| 413 | `payload_too_large` | Request body exceeded 64 KB. |
 | 415 | `json_required` | Request did not use JSON. |
 
 Busy response:

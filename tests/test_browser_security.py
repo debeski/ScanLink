@@ -7,6 +7,8 @@ from unittest.mock import patch
 from tests.test_server import FakeWorker
 from worker import ScanWorker
 
+LEGIT = {"Origin": "https://archive.example"}
+
 try:
     import server
 except ImportError:
@@ -88,6 +90,49 @@ class BrowserSecurityTests(unittest.TestCase):
         self.assertFalse(self.shutdown_event.is_set())
         self.assertEqual(self.worker.jobs, {})
 
+    def test_oversized_scan_bodies_are_refused_without_a_job(self):
+        body = '{"metadata": {"blob": "%s"}}' % ("x" * (1024 * 1024))
+        for endpoint in ("/scan", "/internal/protocol/scan"):
+            with self.subTest(endpoint=endpoint):
+                headers = LEGIT if endpoint == "/scan" else {}
+                response = self.client.post(
+                    endpoint,
+                    data=body,
+                    content_type="application/json",
+                    headers=headers,
+                )
+                self.assertEqual(response.status_code, 413)
+                self.assertEqual(
+                    response.get_json()["error"]["code"], "payload_too_large"
+                )
+        self.assertEqual(
+            response.headers.get("Access-Control-Allow-Origin"), None
+        )
+        self.assertEqual(self.worker.jobs, {})
+        small = self.client.post(
+            "/scan", json={"metadata": {"path": "/x" * 1000}}, headers=LEGIT
+        )
+        self.assertEqual(small.status_code, 202)
+
+    def test_http_errors_keep_the_json_error_shape(self):
+        refused = self.client.post(
+            "/scan",
+            data="x" * (1024 * 1024),
+            content_type="application/json",
+            headers=LEGIT,
+        )
+        self.assertEqual(
+            refused.headers["Access-Control-Allow-Origin"], LEGIT["Origin"]
+        )
+        for response, status in (
+            (refused, 413),
+            (self.client.delete("/scan", headers=LEGIT), 405),
+            (self.client.get("/scan/a/b/c", headers=LEGIT), 404),
+        ):
+            self.assertEqual(response.status_code, status)
+            self.assertEqual(response.mimetype, "application/json")
+            self.assertTrue(response.get_json()["error"]["message"])
+
     def test_local_tools_keep_local_control_endpoints(self):
         protocol = self.client.post("/internal/protocol/scan", json={"action": "scan"})
         shutdown = self.client.post("/shutdown")
@@ -96,7 +141,6 @@ class BrowserSecurityTests(unittest.TestCase):
         self.assertTrue(self.shutdown_event.is_set())
 
 
-LEGIT = {"Origin": "https://archive.example"}
 OTHER = {"Origin": "https://crm.example"}
 EVIL = {"Origin": "https://evil.example"}
 

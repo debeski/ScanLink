@@ -6,6 +6,7 @@ import time
 from urllib.parse import urlparse, urlsplit
 
 from flask import Flask, Response, jsonify, request, send_file
+from werkzeug.exceptions import HTTPException
 from werkzeug.serving import make_server
 
 from utils import (
@@ -26,6 +27,8 @@ logger = get_logger()
 # DNS rebinding makes a foreign page same-origin with the helper, bypassing CORS,
 # so the Host header must name the loopback interface itself.
 LOOPBACK_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+# Scan requests carry a few identifiers; larger bodies would be kept with the job.
+MAX_REQUEST_BYTES = 64 * 1024
 
 
 def is_loopback_host(host):
@@ -37,6 +40,7 @@ def is_loopback_host(host):
 
 def create_app(worker, shutdown_event, transport_state):
     app = Flask(__name__)
+    app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
     config = load_config()
     allowed_origins = config.get("cors_origins", ["*"])
 
@@ -122,6 +126,16 @@ def create_app(worker, shutdown_event, transport_state):
                 403, "local_only", "This endpoint only accepts requests from this computer's ScanLink tools."
             )
         return None
+
+    @app.errorhandler(HTTPException)
+    def http_error(exc):
+        if exc.code == 413:
+            return error_response(
+                413, "payload_too_large", "Scan requests must be smaller than 64 KB."
+            )
+        return error_response(
+            exc.code, exc.name.lower().replace(" ", "_"), exc.description
+        )
 
     @app.after_request
     def add_cors_headers(response):
