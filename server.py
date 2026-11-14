@@ -3,7 +3,7 @@ import socket
 import ssl
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from flask import Flask, Response, jsonify, request, send_file
 from werkzeug.serving import make_server
@@ -22,6 +22,17 @@ from utils import (
 from worker import BusyError
 
 logger = get_logger()
+
+# DNS rebinding makes a foreign page same-origin with the helper, bypassing CORS,
+# so the Host header must name the loopback interface itself.
+LOOPBACK_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+
+
+def is_loopback_host(host):
+    try:
+        return urlsplit(f"//{host}").hostname in LOOPBACK_HOSTNAMES
+    except ValueError:
+        return False
 
 
 def create_app(worker, shutdown_event, transport_state):
@@ -92,6 +103,14 @@ def create_app(worker, shutdown_event, transport_state):
                         "callback_url could not be parsed as a URL.",
                     )
         return data, None
+
+    @app.before_request
+    def reject_foreign_host():
+        if not is_loopback_host(request.host):
+            return error_response(
+                403, "invalid_host", "ScanLink only answers requests addressed to localhost."
+            )
+        return None
 
     @app.after_request
     def add_cors_headers(response):

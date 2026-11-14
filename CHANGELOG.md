@@ -2,6 +2,10 @@
 
 This file owns the release history for `ScanLink`.
 
+## Unreleased
+
+- **Loopback Host Check**: `server.create_app()` refuses every request whose `Host` header is not `localhost`, `127.0.0.1` or `[::1]` with `403 invalid_host`, so a DNS-rebound page cannot reach the API as a same-origin client.
+
 ## v0.8.0b2
 
 - **Scan Deadline Grace**: `ScanWorker` adds `SCAN_TIMEOUT_GRACE_SECONDS` (15s) to the parent's `scan_timeout_seconds` kill limit so the child's own deadline closes TWAIN and reports its error before forced termination; `gui_task_timeout_seconds` is unchanged.

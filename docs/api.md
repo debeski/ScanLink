@@ -11,6 +11,8 @@ ScanLink exposes a browser-friendly local API for starting scans, polling status
 
 The JavaScript helper also defaults to `http://localhost:5000` and `https://localhost:5443`. The server binds to `127.0.0.1`.
 
+Every request must address the helper as `localhost`, `127.0.0.1` or `[::1]` in its `Host` header (any port). Other host names, such as a DNS name rebound to `127.0.0.1`, receive `403 invalid_host`.
+
 ## Error Shape
 
 Errors use this shape:
