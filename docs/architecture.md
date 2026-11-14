@@ -67,6 +67,11 @@ worker.py
 
 This subprocess boundary protects the tray/API process from scanner driver crashes, stuck TWAIN calls, and long-running acquisition operations.
 
+The child compresses each page to JPEG (quality 85) as soon as it is captured and
+embeds those JPEG files in the PDF unchanged, so its memory grows with the
+compressed page size rather than with decoded images (about 26 MB per A4 page at
+300 DPI color). Long ADF batches therefore fit in a 32-bit (x86) build.
+
 ## Thread Model
 
 Main process:

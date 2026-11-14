@@ -12,6 +12,7 @@ This file owns the release history for `ScanLink`.
 - **Private Network Access Preflight**: Allowed-origin preflights carrying `Access-Control-Request-Private-Network: true` receive `Access-Control-Allow-Private-Network: true`.
 - **Non-Blocking TLS Accept**: `LoopbackServer` accepts HTTPS connections without handshaking and `LoopbackRequestHandler` completes the handshake in the connection's own thread; one TCP client that never sent a TLS hello previously stalled every HTTPS request indefinitely.
 - **Connection Timeout**: `LoopbackRequestHandler` sets a 30-second socket timeout (`REQUEST_TIMEOUT_SECONDS`), so half-sent or idle connections no longer hold a server thread forever.
+- **Compressed Page Capture**: `ScannerManager` encodes each captured page to JPEG on arrival (`_encode_page`) and `_create_pdf` embeds the JPEG files through `drawImage(path)` instead of decoding them again through `ImageReader`; the scan child's peak memory for 20 pages at 300 DPI drops from about 2 GB to 0.2 GB, which previously exhausted x86 builds. Image streams in the PDF are unchanged.
 
 ## v0.8.0b2
 
