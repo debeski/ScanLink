@@ -28,7 +28,7 @@
 
 ### Active & Pending Tasks
 - [x] 0.8.0b2 merged to main via PR3 (063269b, 2026-10-30; CI 3/3 PASS): 15s parent scan-deadline grace, callback parse guard, per-scan `/health` in `scanlink.js`. Untagged; tagging/publishing needs owner OK.
-- [ ] Review/merge `0.8/stress_fixes` (11 fix commits, 63 tests); then decide the `["*"]` default and the DjangoLux timeout/error-code mapping.
+- [ ] Review/merge `0.8/stress_fixes` (10 fix commits, 63 tests); then decide the `["*"]` default and the DjangoLux timeout/error-code mapping.
 - [ ] Mirror the per-scan health check in DjangoLux `scan_button.js` if it shares the stale-transport logic.
 - [x] 2026-10-30: retired `0.7/automatic_https`, `0.8/stress_fixes`, `0.8/stress_followups` (checkouts removed, branches deleted locally/GitHub; leftovers in `.xclude/retired-worktrees/2026-10-30/`). Only `main` remains.
 - [x] Paired deeper stress and real-worker regressions pass; candidate0.8.0b1 prepared locally. Owner authorized next beta; PR2 merged after x86/x64 native CI PASS, release gates PASS, both installers published.
