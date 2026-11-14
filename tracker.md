@@ -3,6 +3,7 @@
 ## Part 1: Project-specific
 ### Current Snapshot
 - Published 0.8.0b1 on `0.8/stress_fixes` (2026-10-25): real worker completion/deadline, public/internal input validation, single POST transport behavior and result-race fixes. Published0.7.5b1 (tagd74bf90) and stable Latest0.7.4 unchanged; owner authorized publication2026-10-25; PR2 merged as a82aab7; v0.8.0b1 published, release40233617433 PASS, x64/x86 asset digests verified; stable Latest stays0.7.4.
+- Branch `0.8/stress_fixes` (2026-11-14, local only, unpushed, VERSION still 0.8.0b2): browser-security and transport hardening under `## Unreleased` — loopback Host check, local-only `/shutdown` and protocol endpoint, scans bound to their Origin, server-side allow-list refusal, 64 KB bodies + JSON HTTP errors, PNA preflight, TLS handshake off the accept loop + 30 s socket timeout, JPEG page capture (x86 memory), scan worker directory check, helper identity check.
 - Windows tray app uses TWAIN/pytwain; scan jobs run through child `main.py --scan-worker-dir` / `scan_runtime.py`.
 - Normal startup serves HTTP :5000 while automatically provisioning trusted localhost HTTPS :5443; failed setup offers native Retry and a tray repair action.
 - `certificates.py`: per-user localhost-only self-signed server identity, Windows CurrentUser Root trust, encrypted PKCS#8 key with DPAPI-protected password; hourly checks/30-day renewal and live TLS context selection.
@@ -21,10 +22,13 @@
 - Windows x64/x86 unit/build/install gates passed, including real certificate consent, DPAPI/trust, 120 verified HTTPS requests per architecture and restart identity reuse. Real Windows browser/scanner and enterprise-policy acceptance remain manual.
 - Target PaperStream fi-6230Z may expose only 32-bit TWAIN; live driver compliance/output quality remain unverified. Back-only and blank-page discard remain unsupported.
 - Organization/browser policies may refuse user-installed trust. A denied setup is reported as failure and retried with the same identity, without repeated automatic dialogs.
-- Callbacks are never delivered (since 36249b6, 2026-04-28): `_process_job` passes the serialized job, which omits `callback_url`, to `_send_callback`. Docs promise delivery; enabling it changes production behavior and needs an owner decision.
+- Default `cors_origins: ["*"]` (persisted in existing config.json files) lets any website the operator opens start a scan and download it; silent once a default scanner is saved. Ownership now blocks cross-site theft; closing the rest (first-use origin approval or provisioned DjangoLux origins) needs an owner decision.
+- Contract gaps on the DjangoLux side: `scan_button.js` gives up after 5 min while ScanLink's deadline is 600+15 s (no cancel endpoint; retry reports busy, PDF orphaned 300 s); `no_pages_scanned`, `scan_idle_timeout`, `acquire_failed`, `scan_worker_crashed`, `origin_not_allowed`, `payload_too_large` show ScanLink's English message.
+- Callbacks are never delivered (since 36249b6, 2026-04-28): `_process_job` passes the serialized job, which omits `callback_url`, to `_send_callback`. Docs promise delivery; enabling it changes production behavior and needs an owner decision. Any re-enable must restrict callback hosts: any page or `scanlink://` link can set `callback_url`.
 
 ### Active & Pending Tasks
 - [x] 0.8.0b2 merged to main via PR3 (063269b, 2026-10-30; CI 3/3 PASS): 15s parent scan-deadline grace, callback parse guard, per-scan `/health` in `scanlink.js`. Untagged; tagging/publishing needs owner OK.
+- [ ] Review/merge `0.8/stress_fixes` (11 fix commits, 63 tests); then decide the `["*"]` default and the DjangoLux timeout/error-code mapping.
 - [ ] Mirror the per-scan health check in DjangoLux `scan_button.js` if it shares the stale-transport logic.
 - [x] 2026-10-30: retired `0.7/automatic_https`, `0.8/stress_fixes`, `0.8/stress_followups` (checkouts removed, branches deleted locally/GitHub; leftovers in `.xclude/retired-worktrees/2026-10-30/`). Only `main` remains.
 - [x] Paired deeper stress and real-worker regressions pass; candidate0.8.0b1 prepared locally. Owner authorized next beta; PR2 merged after x86/x64 native CI PASS, release gates PASS, both installers published.
@@ -38,6 +42,7 @@
 - [x] Verified real TLS handshakes, hostname rejection and live identity renewal; setup failure preserves HTTP and Retry recovers HTTPS.
 
 ### Validation & Docs Log
+- 2026-11-14 `0.8/stress_fixes`, macOS scratch venv (py3.13, Flask 3.1.3): 63 tests OK/1 Windows skip; live stack 20×50 concurrent POSTs (1 accepted each), 50k mixed requests flat RSS, 150 scan cycles, 200 idle HTTP + 200 idle TLS sockets, 7k connect/close, 126 MB result over HTTP/HTTPS, 50k fuzzed `scanlink://` URLs; DjangoLux `main.js`+`scan_button.js` end-to-end against the live stack; dlux `scenarios.mjs` 34/34. Docs: api/architecture, CHANGELOG Unreleased. Evidence `.xclude/validation/stress-2026-11-14/`. No Windows/TWAIN run.
 - 2026-10-30: 0.8.0b2 changes, macOS: 42 unit tests OK/1 Windows skip (scratch venv). New grace/callback tests fail on 0.8.0b1 code; Node harness for `scanlink.js` 4/4 (old: 2/4). Docs: api/architecture/developer guide, CHANGELOG v0.8.0b2, VERSION 0.8.0b2. Windows/native gates not run.
 - 2026-10-25: 40 local unit tests OK/1 Windows skip; Windows CI/release PASS x64+x86 including consent/120 HTTPS/restart; pairedJS24 PASS; real worker1000 health (500 verified TLS)/100 hashed PDFs/50 busy/40 result races PASS; timeouts/crash/cancel/callback/shutdown recovery PASS.8097 UI300 health/30 scans/20 simultaneous, PDF save/Arabic lost-response guidance/one POST PASS. Dlux3064 OK/6skips +79 focused; doctor0error. Native candidate gates now PASS; physical hardware/Windows browser policies unverified.
 - 2026-10-25: API/architecture/developer guide, VERSION0.8.0b1 and CHANGELOG document parent-owned completion, hard deadline, strict payloads, retained metadata and scan_request_uncertain. Local report `.xclude/retired-worktrees/2026-10-30/stress_fixes/.xclude/validation/paired-stress-2026-10-25.md`.
