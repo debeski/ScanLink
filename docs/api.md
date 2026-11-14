@@ -104,9 +104,13 @@ Busy response:
 }
 ```
 
+`active_job_id` is included only when the request comes from the same `Origin` that started the active job (or, for jobs started without an `Origin`, from a local tool that sends none).
+
 ## GET /scan/<job_id>
 
 Returns job status.
+
+A job belongs to the `Origin` that started it. Status and result requests from any other `Origin`, or without an `Origin` for a browser-started job, receive `404 job_not_found`, so one website cannot follow or download another website's scan.
 
 Response:
 
@@ -214,7 +218,9 @@ Allowed origins come from `%LOCALAPPDATA%\ScanLink\config.json`:
 }
 ```
 
-When `cors_origins` is not `["*"]`, the request `Origin` must exactly match an entry in the list.
+When `cors_origins` is not `["*"]`, the request `Origin` must exactly match an entry in the list. Browser-endpoint requests from any other `Origin`, including preflights, receive `403 origin_not_allowed` before any work is done.
+
+With the default `["*"]`, every website the operator opens can call `/health` and `/scan` and download the scans it starts itself. Job ownership keeps each website away from scans started by others. List the DjangoLux origins in `cors_origins` to restrict which websites can scan.
 
 ## Automatic HTTPS setup status (0.7.5b1)
 

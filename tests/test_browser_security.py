@@ -1,8 +1,11 @@
+import queue
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
 from tests.test_server import FakeWorker
+from worker import ScanWorker
 
 try:
     import server
@@ -91,6 +94,105 @@ class BrowserSecurityTests(unittest.TestCase):
         self.assertEqual(protocol.status_code, 202)
         self.assertEqual(shutdown.status_code, 200)
         self.assertTrue(self.shutdown_event.is_set())
+
+
+LEGIT = {"Origin": "https://archive.example"}
+OTHER = {"Origin": "https://crm.example"}
+EVIL = {"Origin": "https://evil.example"}
+
+
+@unittest.skipIf(server is None, "Flask is not installed in this environment")
+class JobOwnershipTests(unittest.TestCase):
+    cors_origins = ["*"]
+
+    def setUp(self):
+        config = patch(
+            "server.load_config", return_value={"cors_origins": self.cors_origins}
+        )
+        config.start()
+        self.addCleanup(config.stop)
+        # Not started: submitted jobs stay queued until a test completes them.
+        self.worker = ScanWorker(queue.Queue())
+        self.app = server.create_app(
+            self.worker, threading.Event(), {"http_enabled": True}
+        )
+        self.client = self.app.test_client()
+
+    def complete(self, job_id):
+        self.worker._update_job(
+            job_id,
+            status="completed",
+            completed_at=time.time(),
+            result_bytes=b"%PDF-1.4\nsecret\n",
+        )
+
+    def test_another_origin_cannot_find_or_take_a_scan(self):
+        job_id = self.client.post("/scan", json={}, headers=LEGIT).get_json()["job_id"]
+
+        other_busy = self.client.post("/scan", json={}, headers=OTHER)
+        self.assertEqual(other_busy.status_code, 409)
+        self.assertNotIn("active_job_id", other_busy.get_json()["error"])
+        owner_busy = self.client.post("/scan", json={}, headers=LEGIT)
+        self.assertEqual(owner_busy.get_json()["error"]["active_job_id"], job_id)
+
+        self.complete(job_id)
+        for headers in (OTHER, {}, {"Sec-Fetch-Site": "cross-site"}):
+            with self.subTest(headers=headers):
+                for path in (f"/scan/{job_id}", f"/scan/{job_id}/result"):
+                    response = self.client.get(path, headers=headers)
+                    self.assertEqual(response.status_code, 404)
+                    self.assertEqual(
+                        response.get_json()["error"]["code"], "job_not_found"
+                    )
+
+        self.assertEqual(
+            self.client.get(f"/scan/{job_id}", headers=LEGIT).get_json()["status"],
+            "completed",
+        )
+        result = self.client.get(f"/scan/{job_id}/result", headers=LEGIT)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.data, b"%PDF-1.4\nsecret\n")
+
+    def test_jobs_started_without_an_origin_stay_with_local_tools(self):
+        job_id = self.client.post("/scan", json={}).get_json()["job_id"]
+        self.assertEqual(self.client.post("/scan", json={}).get_json()["error"]["active_job_id"], job_id)
+        self.assertNotIn(
+            "active_job_id",
+            self.client.post("/scan", json={}, headers=LEGIT).get_json()["error"],
+        )
+        self.assertEqual(
+            self.client.get(f"/scan/{job_id}", headers=LEGIT).status_code, 404
+        )
+        self.complete(job_id)
+        self.assertEqual(self.client.get(f"/scan/{job_id}/result").status_code, 200)
+
+
+class AllowListTests(JobOwnershipTests):
+    cors_origins = ["https://archive.example", "https://crm.example"]
+
+    def test_unlisted_origin_is_refused_before_any_work(self):
+        preflight = self.client.options(
+            "/scan",
+            headers={**EVIL, "Access-Control-Request-Method": "POST"},
+        )
+        for response in (
+            preflight,
+            self.client.get("/health", headers=EVIL),
+            self.client.post("/scan", json={}, headers=EVIL),
+            self.client.get("/scan/anything", headers=EVIL),
+        ):
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(
+                response.get_json()["error"]["code"], "origin_not_allowed"
+            )
+            self.assertNotIn("Access-Control-Allow-Origin", response.headers)
+        self.assertEqual(self.worker.jobs, {})
+
+        accepted = self.client.post("/scan", json={}, headers=LEGIT)
+        self.assertEqual(accepted.status_code, 202)
+        self.assertEqual(
+            accepted.headers["Access-Control-Allow-Origin"], LEGIT["Origin"]
+        )
 
 
 if __name__ == "__main__":

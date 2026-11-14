@@ -110,10 +110,14 @@ def create_app(worker, shutdown_event, transport_state):
             return error_response(
                 403, "invalid_host", "ScanLink only answers requests addressed to localhost."
             )
+        origin = request.headers.get("Origin")
+        if is_browser_endpoint(request.path):
+            if origin is not None and not is_origin_allowed(origin):
+                return error_response(
+                    403, "origin_not_allowed", "This website is not allowed to use ScanLink."
+                )
         # Browsers send Origin or Sec-Fetch-Site; form posts need no CORS preflight.
-        if not is_browser_endpoint(request.path) and (
-            "Origin" in request.headers or "Sec-Fetch-Site" in request.headers
-        ):
+        elif origin is not None or "Sec-Fetch-Site" in request.headers:
             return error_response(
                 403, "local_only", "This endpoint only accepts requests from this computer's ScanLink tools."
             )
@@ -164,13 +168,15 @@ def create_app(worker, shutdown_event, transport_state):
                 callback_url=callback_url,
                 metadata=data.get("metadata"),
                 source="api",
+                origin=request.headers.get("Origin"),
             )
         except BusyError as exc:
+            extra = {"active_job_id": exc.active_job_id} if exc.active_job_id else {}
             return error_response(
                 409,
                 "busy",
                 "Another scan job is already queued or running.",
-                active_job_id=exc.active_job_id,
+                **extra,
             )
 
         return jsonify({"job_id": job["job_id"], "status": "queued"}), 202
@@ -180,7 +186,7 @@ def create_app(worker, shutdown_event, transport_state):
         if request.method == "OPTIONS":
             return empty_options_response()
 
-        job = worker.get_job(job_id)
+        job = worker.get_job(job_id, origin=request.headers.get("Origin"))
         if not job:
             return error_response(
                 404, "job_not_found", "The requested scan job was not found."
@@ -192,7 +198,8 @@ def create_app(worker, shutdown_event, transport_state):
         if request.method == "OPTIONS":
             return empty_options_response()
 
-        job = worker.get_job(job_id)
+        origin = request.headers.get("Origin")
+        job = worker.get_job(job_id, origin=origin)
         if not job:
             return error_response(
                 404, "job_not_found", "The requested scan job was not found."
@@ -205,7 +212,7 @@ def create_app(worker, shutdown_event, transport_state):
                 current_status=job["status"],
             )
 
-        updated_job, result_bytes = worker.consume_result(job_id)
+        updated_job, result_bytes = worker.consume_result(job_id, origin=origin)
         if not updated_job:
             return error_response(
                 404, "job_not_found", "The requested scan job was not found."

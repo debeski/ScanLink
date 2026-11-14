@@ -24,7 +24,9 @@ class FakeWorker:
     def is_twain_available(self):
         return self.twain_available
 
-    def submit_job(self, doc_id=None, callback_url=None, metadata=None, source="api"):
+    def submit_job(
+        self, doc_id=None, callback_url=None, metadata=None, source="api", origin=None
+    ):
         if self.busy:
             raise BusyError(active_job_id="busy-job")
 
@@ -47,14 +49,14 @@ class FakeWorker:
         }
         return job
 
-    def get_job(self, job_id):
+    def get_job(self, job_id, origin=None):
         job = self.jobs.get(job_id)
         if not job:
             return None
 
         return {key: value for key, value in job.items() if key != "result_bytes"}
 
-    def consume_result(self, job_id):
+    def consume_result(self, job_id, origin=None):
         job = self.jobs.get(job_id)
         if not job:
             return None, None
