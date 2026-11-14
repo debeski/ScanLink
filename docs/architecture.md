@@ -218,8 +218,8 @@ When launched with a `scanlink://` URL:
 
 1. `main.py` parses the URL with `protocol_handler.parse_protocol_url()`.
 2. It tries to forward the command to `http://127.0.0.1:5000/internal/protocol/scan`.
-3. If forwarding succeeds, the new process exits.
-4. If no instance is running, the new process becomes the tray instance and queues the protocol scan after startup.
+3. If forwarding succeeds, the new process exits. Forwarding succeeds only on a ScanLink answer: `202` with a `job_id`, or `409` with error code `busy`.
+4. If no instance is running, the new process becomes the tray instance and queues the protocol scan after startup. An instance counts as running only when `/health` returns ScanLink's JSON (`status: ok` with `version` and `twain_available`), so another program answering on port 5000 does not make ScanLink exit.
 
 This prevents duplicate tray apps and competing scanner sessions.
 

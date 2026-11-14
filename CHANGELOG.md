@@ -14,6 +14,8 @@ This file owns the release history for `ScanLink`.
 - **Connection Timeout**: `LoopbackRequestHandler` sets a 30-second socket timeout (`REQUEST_TIMEOUT_SECONDS`), so half-sent or idle connections no longer hold a server thread forever.
 - **Compressed Page Capture**: `ScannerManager` encodes each captured page to JPEG on arrival (`_encode_page`) and `_create_pdf` embeds the JPEG files through `drawImage(path)` instead of decoding them again through `ImageReader`; the scan child's peak memory for 20 pages at 300 DPI drops from about 2 GB to 0.2 GB, which previously exhausted x86 builds. Image streams in the PDF are unchanged.
 - **Scan Worker Directory Check**: `scan_runtime.run_scan_job()` refuses any `--scan-worker-dir` that is not a `scanlink-job-*` directory directly inside the temp directory, so an argument injected through an unescaped `scanlink://` launch cannot read a request from, or write a scanned PDF to, another folder or a network share.
+- **Helper Identity Check**: `protocol_handler.is_existing_instance_running()` and `forward_protocol_command()` accept only ScanLink-shaped answers, so another program returning `200` on port 5000 no longer makes a new ScanLink exit as a duplicate or swallow a protocol scan.
+- **Protocol Log Lines**: `parse_protocol_url()` logs URLs and parsed values with `%r`, so a `scanlink://` URL with encoded line breaks cannot forge `scanner.log` entries.
 
 ## v0.8.0b2
 
