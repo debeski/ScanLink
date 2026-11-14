@@ -67,6 +67,12 @@ worker.py
 
 This subprocess boundary protects the tray/API process from scanner driver crashes, stuck TWAIN calls, and long-running acquisition operations.
 
+`scan_runtime.run_scan_job()` only runs in a `scanlink-job-*` directory directly
+inside the user's temp directory, the only kind `ScanWorker` creates. Any other
+`--scan-worker-dir` value, such as one injected through an unescaped
+`scanlink://` launch or a network share path, exits with code 1 before reading
+or writing anything.
+
 The child compresses each page to JPEG (quality 85) as soon as it is captured and
 embeds those JPEG files in the PDF unchanged, so its memory grows with the
 compressed page size rather than with decoded images (about 26 MB per A4 page at

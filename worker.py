@@ -17,7 +17,7 @@ except ImportError:
     requests = None
 
 from scanner import ScanError, ScannerManager
-from utils import get_logger, load_config
+from utils import SCAN_JOB_DIRECTORY_PREFIX, get_logger, load_config
 
 logger = get_logger()
 
@@ -263,7 +263,7 @@ class ScanWorker(threading.Thread):
         return self._execute_gui(func, timeout=timeout)
 
     def _run_scan_subprocess(self, job_id, on_progress):
-        work_dir = tempfile.mkdtemp(prefix="scanlink-job-")
+        work_dir = tempfile.mkdtemp(prefix=SCAN_JOB_DIRECTORY_PREFIX)
         state_path = os.path.join(work_dir, "state.json")
         result_path = os.path.join(work_dir, "result.pdf")
         request_path = os.path.join(work_dir, "request.json")
