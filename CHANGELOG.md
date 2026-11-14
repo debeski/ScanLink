@@ -2,6 +2,22 @@
 
 This file owns the release history for `ScanLink`.
 
+## Unreleased
+
+- **No Website Can Scan Until Allowed (security)**: `cors_origins` defaults to `[]` and wildcards are ignored, so a saved `["*"]` no longer lets every website the operator opens start a scan and download it (silently once a default scanner is saved). New `POST /link` (`sites.SiteRegistry`): a website asks to link, naming the sites its administrator allows; an unlinked one opens an approval window in ScanLink (`gui.dialogs.confirm_site_link`) naming the requesting origin as the browser sent it, waits up to 120 s, one window at a time, and a declined site cannot ask again for 10 minutes. A linked site replaces its list without asking. Links persist in `config.json` `linked_sites`; the tray menu's **Linked Websites** lists and unlinks them. `GET /health` reports `link` for the requesting site. The bundled `scanlink.js` adds `link(sites)` and reports `origin_not_allowed` from `checkHealth()`. Upgrading operators approve each website once.
+- **Loopback Host Check**: `server.create_app()` refuses every request whose `Host` header is not `localhost`, `127.0.0.1` or `[::1]` with `403 invalid_host`, so a DNS-rebound page cannot reach the API as a same-origin client.
+- **Local-Only Control Endpoints**: `POST /shutdown` and `POST /internal/protocol/scan` refuse any request carrying `Origin` or `Sec-Fetch-Site` with `403 local_only`, so a cross-site form post can no longer shut ScanLink down; the protocol forwarder and local scripts send neither header.
+- **Scan Ownership By Origin**: `ScanWorker.submit_job()` records the requesting `Origin`; `GET /scan/<job_id>` and `/result` answer `404 job_not_found` to any other origin, and `409 busy` includes `active_job_id` only for the job's own origin, so a website can no longer learn, follow and download another website's scan.
+- **Server-Side Origin Allow-List**: Browser-endpoint requests from a website that is not allowed are refused with `403 origin_not_allowed` before any work, instead of only omitting CORS headers; the refusal carries CORS headers so the page can read it and offer to link.
+- **Request Body Limit**: `MAX_CONTENT_LENGTH` is 64 KB, answered as `413 payload_too_large`; a 64 MB `metadata` body was previously accepted, kept with the job for its 15-minute TTL and returned by every status poll. HTTP errors (`404`, `405`, `413`, `500`) now use the JSON error shape with CORS headers.
+- **Private Network Access Preflight**: Preflights carrying `Access-Control-Request-Private-Network: true` receive `Access-Control-Allow-Private-Network: true`.
+- **Non-Blocking TLS Accept**: `LoopbackServer` accepts HTTPS connections without handshaking and `LoopbackRequestHandler` completes the handshake in the connection's own thread; one TCP client that never sent a TLS hello previously stalled every HTTPS request indefinitely.
+- **Connection Timeout**: `LoopbackRequestHandler` sets a 30-second socket timeout (`REQUEST_TIMEOUT_SECONDS`), so half-sent or idle connections no longer hold a server thread forever.
+- **Compressed Page Capture**: `ScannerManager` encodes each captured page to JPEG on arrival (`_encode_page`) and `_create_pdf` embeds the JPEG files through `drawImage(path)` instead of decoding them again through `ImageReader`; the scan child's peak memory for 20 pages at 300 DPI drops from about 2 GB to 0.2 GB, which previously exhausted x86 builds. Image streams in the PDF are unchanged.
+- **Scan Worker Directory Check**: `scan_runtime.run_scan_job()` refuses any `--scan-worker-dir` that is not a `scanlink-job-*` directory directly inside the temp directory, so an argument injected through an unescaped `scanlink://` launch cannot read a request from, or write a scanned PDF to, another folder or a network share.
+- **Helper Identity Check**: `protocol_handler.is_existing_instance_running()` and `forward_protocol_command()` accept only ScanLink-shaped answers, so another program returning `200` on port 5000 no longer makes a new ScanLink exit as a duplicate or swallow a protocol scan.
+- **Protocol Log Lines**: `parse_protocol_url()` logs URLs and parsed values with `%r`, so a `scanlink://` URL with encoded line breaks cannot forge `scanner.log` entries.
+
 ## v0.8.0b2
 
 - **Scan Deadline Grace**: `ScanWorker` adds `SCAN_TIMEOUT_GRACE_SECONDS` (15s) to the parent's `scan_timeout_seconds` kill limit so the child's own deadline closes TWAIN and reports its error before forced termination; `gui_task_timeout_seconds` is unchanged.

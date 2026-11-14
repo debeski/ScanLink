@@ -1,12 +1,13 @@
 import json
 import os
 import sys
+import tempfile
 import time
 import tkinter as tk
 
 from gui.dialogs import init_gui
 from scanner import ScanError, ScannerManager
-from utils import get_logger
+from utils import SCAN_JOB_DIRECTORY_PREFIX, get_logger
 
 REQUEST_FILE = "request.json"
 STATE_FILE = "state.json"
@@ -43,7 +44,23 @@ def _write_result(work_dir, pdf_buffer):
         result_file.write(pdf_buffer.getvalue())
 
 
+def is_job_directory(work_dir):
+    """True only for a directory ScanWorker created with tempfile.mkdtemp()."""
+    path = os.path.abspath(work_dir)
+    return (
+        os.path.basename(path).startswith(SCAN_JOB_DIRECTORY_PREFIX)
+        and os.path.normcase(os.path.dirname(path))
+        == os.path.normcase(os.path.abspath(tempfile.gettempdir()))
+        and os.path.isdir(path)
+    )
+
+
 def run_scan_job(work_dir):
+    # A launcher that passes an unescaped scanlink:// URL could inject
+    # --scan-worker-dir pointing at another folder or a remote share.
+    if not is_job_directory(work_dir):
+        logger.error("Refusing scan worker directory outside ScanLink's temp jobs: %r", work_dir)
+        return 1
     root = None
     try:
         request = _read_request(work_dir)

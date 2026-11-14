@@ -7,6 +7,7 @@ import ctypes
 import io
 import tempfile
 from logging.handlers import RotatingFileHandler
+from urllib.parse import urlsplit
 
 try:
     from PIL import Image as PilImage
@@ -49,6 +50,7 @@ DEFAULT_RESULT_TTL_SECONDS = 300
 DEFAULT_SCAN_TIMEOUT_SECONDS = 600
 DEFAULT_GUI_TASK_TIMEOUT_SECONDS = 900
 DEFAULT_SCAN_IDLE_TIMEOUT_SECONDS = 45
+SCAN_JOB_DIRECTORY_PREFIX = "scanlink-job-"
 DEFAULT_RESOLUTION = 200
 DEFAULT_SCAN_SOURCE = "adf"
 DEFAULT_SCAN_SIDE = "front"
@@ -135,7 +137,53 @@ def _apply_scan_profile_migration(config):
     config["color_mode"] = DEFAULT_COLOR_MODE
     config["paper_protection"] = False
 
+def normalize_origin(value):
+    """``scheme://host[:port]`` for an http(s) website origin, as browsers send it; else None.
+
+    Wildcards, paths, credentials and the opaque ``null`` origin are refused.
+    """
+    if not isinstance(value, str) or not value or len(value) > 255:
+        return None
+    try:
+        parts = urlsplit(value.strip())
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    if parts.username or parts.password or parts.query or parts.fragment or parts.path not in ("", "/"):
+        return None
+    host = parts.hostname.lower()
+    if "*" in host or any(ch.isspace() for ch in host):
+        return None
+    if ":" in host:
+        host = f"[{host}]"
+    default_port = 443 if parts.scheme == "https" else 80
+    return f"{parts.scheme}://{host}" + (f":{port}" if port and port != default_port else "")
+
+def _origin_list(values):
+    origins = []
+    for value in values if isinstance(values, list) else []:
+        origin = normalize_origin(value)
+        if origin and origin not in origins:
+            origins.append(origin)
+    return origins
+
+def _linked_sites(value):
+    links = {}
+    for origin, link in (value.items() if isinstance(value, dict) else ()):
+        origin = normalize_origin(origin)
+        if not origin or not isinstance(link, dict):
+            continue
+        sites = _origin_list(link.get("sites"))
+        if origin not in sites:
+            sites.insert(0, origin)
+        links[origin] = {"sites": sites, "linked_at": str(link.get("linked_at") or "")}
+    return links
+
 def _normalize_config(config):
+    config["cors_origins"] = _origin_list(config.get("cors_origins"))
+    config["linked_sites"] = _linked_sites(config.get("linked_sites"))
     config["scan_profile_version"] = int(config.get("scan_profile_version") or SCAN_PROFILE_VERSION)
     config["scan_source"] = _coerce_choice(config.get("scan_source"), SCAN_SOURCE_OPTIONS, DEFAULT_SCAN_SOURCE)
     config["scan_side"] = _coerce_choice(config.get("scan_side"), SCAN_SIDE_OPTIONS, DEFAULT_SCAN_SIDE)
@@ -159,7 +207,8 @@ def load_config():
         "default_scanner": None,
         "show_scanner_ui": False,
         "paper_protection": False,
-        "cors_origins": ["*"],
+        "cors_origins": [],
+        "linked_sites": {},
         "job_ttl_seconds": DEFAULT_JOB_TTL_SECONDS,
         "result_ttl_seconds": DEFAULT_RESULT_TTL_SECONDS,
         "scan_timeout_seconds": DEFAULT_SCAN_TIMEOUT_SECONDS,

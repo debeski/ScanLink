@@ -1,0 +1,274 @@
+import queue
+import threading
+import time
+import unittest
+from unittest.mock import patch
+
+from tests.test_server import FakeWorker
+from worker import ScanWorker
+
+LEGIT = {"Origin": "https://archive.example"}
+
+try:
+    import server
+except ImportError:
+    server = None
+
+
+@unittest.skipIf(server is None, "Flask is not installed in this environment")
+class BrowserSecurityTests(unittest.TestCase):
+    cors_origins = ["https://archive.example"]
+
+    def setUp(self):
+        self.worker = FakeWorker()
+        self.shutdown_event = threading.Event()
+        config = patch(
+            "server.load_config", return_value={"cors_origins": self.cors_origins}
+        )
+        config.start()
+        self.addCleanup(config.stop)
+        self.app = server.create_app(
+            self.worker, self.shutdown_event, {"http_enabled": True}
+        )
+        self.client = self.app.test_client()
+
+    def test_rebound_host_names_are_refused(self):
+        for host in (
+            "evil.example:5000",
+            "127.0.0.1.nip.io:5000",
+            "localhost.evil.example",
+            "evil.localhost:5443",
+            "a b",
+        ):
+            with self.subTest(host=host):
+                health = self.client.get("/health", headers={"Host": host})
+                scan = self.client.post("/scan", json={}, headers={"Host": host})
+                shutdown = self.client.post("/shutdown", headers={"Host": host})
+                for response in (health, scan, shutdown):
+                    self.assertEqual(response.status_code, 403)
+                    self.assertEqual(
+                        response.get_json()["error"]["code"], "invalid_host"
+                    )
+        self.assertEqual(self.worker.jobs, {})
+        self.assertFalse(self.shutdown_event.is_set())
+
+    def test_loopback_host_names_are_served(self):
+        for host in (
+            "localhost:5000",
+            "localhost:5443",
+            "127.0.0.1:5000",
+            "[::1]:5443",
+            "LOCALHOST:5443",
+            "127.0.0.1",
+        ):
+            with self.subTest(host=host):
+                response = self.client.get("/health", headers={"Host": host})
+                self.assertEqual(response.status_code, 200)
+
+    def test_browser_requests_cannot_use_local_control_endpoints(self):
+        browser_headers = (
+            {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"},
+            {"Origin": "null"},
+            {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate"},
+        )
+        for headers in browser_headers:
+            with self.subTest(headers=headers):
+                shutdown = self.client.post(
+                    "/shutdown",
+                    data="x=1",
+                    content_type="application/x-www-form-urlencoded",
+                    headers=headers,
+                )
+                protocol = self.client.post(
+                    "/internal/protocol/scan", json={"action": "scan"}, headers=headers
+                )
+                for response in (shutdown, protocol):
+                    self.assertEqual(response.status_code, 403)
+                    self.assertEqual(
+                        response.get_json()["error"]["code"], "local_only"
+                    )
+        self.assertFalse(self.shutdown_event.is_set())
+        self.assertEqual(self.worker.jobs, {})
+
+    def test_oversized_scan_bodies_are_refused_without_a_job(self):
+        body = '{"metadata": {"blob": "%s"}}' % ("x" * (1024 * 1024))
+        for endpoint in ("/scan", "/internal/protocol/scan"):
+            with self.subTest(endpoint=endpoint):
+                headers = LEGIT if endpoint == "/scan" else {}
+                response = self.client.post(
+                    endpoint,
+                    data=body,
+                    content_type="application/json",
+                    headers=headers,
+                )
+                self.assertEqual(response.status_code, 413)
+                self.assertEqual(
+                    response.get_json()["error"]["code"], "payload_too_large"
+                )
+        self.assertEqual(
+            response.headers.get("Access-Control-Allow-Origin"), None
+        )
+        self.assertEqual(self.worker.jobs, {})
+        small = self.client.post(
+            "/scan", json={"metadata": {"path": "/x" * 1000}}, headers=LEGIT
+        )
+        self.assertEqual(small.status_code, 202)
+
+    def test_http_errors_keep_the_json_error_shape(self):
+        refused = self.client.post(
+            "/scan",
+            data="x" * (1024 * 1024),
+            content_type="application/json",
+            headers=LEGIT,
+        )
+        self.assertEqual(
+            refused.headers["Access-Control-Allow-Origin"], LEGIT["Origin"]
+        )
+        for response, status in (
+            (refused, 413),
+            (self.client.delete("/scan", headers=LEGIT), 405),
+            (self.client.get("/scan/a/b/c", headers=LEGIT), 404),
+        ):
+            self.assertEqual(response.status_code, status)
+            self.assertEqual(response.mimetype, "application/json")
+            self.assertTrue(response.get_json()["error"]["message"])
+
+    def test_private_network_preflight_is_answered_for_allowed_origins(self):
+        for path in ("/health", "/scan", "/scan/job-1", "/scan/job-1/result"):
+            with self.subTest(path=path):
+                response = self.client.options(
+                    path,
+                    headers={
+                        **LEGIT,
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "content-type",
+                        "Access-Control-Request-Private-Network": "true",
+                    },
+                )
+                self.assertEqual(response.status_code, 204)
+                self.assertEqual(
+                    response.headers["Access-Control-Allow-Private-Network"], "true"
+                )
+                self.assertEqual(
+                    response.headers["Access-Control-Allow-Origin"], LEGIT["Origin"]
+                )
+        plain = self.client.options(
+            "/scan", headers={**LEGIT, "Access-Control-Request-Method": "POST"}
+        )
+        self.assertNotIn("Access-Control-Allow-Private-Network", plain.headers)
+
+    def test_local_tools_keep_local_control_endpoints(self):
+        protocol = self.client.post("/internal/protocol/scan", json={"action": "scan"})
+        shutdown = self.client.post("/shutdown")
+        self.assertEqual(protocol.status_code, 202)
+        self.assertEqual(shutdown.status_code, 200)
+        self.assertTrue(self.shutdown_event.is_set())
+
+
+OTHER = {"Origin": "https://crm.example"}
+EVIL = {"Origin": "https://evil.example"}
+
+
+@unittest.skipIf(server is None, "Flask is not installed in this environment")
+class JobOwnershipTests(unittest.TestCase):
+    cors_origins = ["https://archive.example", "https://crm.example"]
+
+    def setUp(self):
+        config = patch(
+            "server.load_config", return_value={"cors_origins": self.cors_origins}
+        )
+        config.start()
+        self.addCleanup(config.stop)
+        # Not started: submitted jobs stay queued until a test completes them.
+        self.worker = ScanWorker(queue.Queue())
+        self.app = server.create_app(
+            self.worker, threading.Event(), {"http_enabled": True}
+        )
+        self.client = self.app.test_client()
+
+    def complete(self, job_id):
+        self.worker._update_job(
+            job_id,
+            status="completed",
+            completed_at=time.time(),
+            result_bytes=b"%PDF-1.4\nsecret\n",
+        )
+
+    def test_another_origin_cannot_find_or_take_a_scan(self):
+        job_id = self.client.post("/scan", json={}, headers=LEGIT).get_json()["job_id"]
+
+        other_busy = self.client.post("/scan", json={}, headers=OTHER)
+        self.assertEqual(other_busy.status_code, 409)
+        self.assertNotIn("active_job_id", other_busy.get_json()["error"])
+        owner_busy = self.client.post("/scan", json={}, headers=LEGIT)
+        self.assertEqual(owner_busy.get_json()["error"]["active_job_id"], job_id)
+
+        self.complete(job_id)
+        for headers in (OTHER, {}, {"Sec-Fetch-Site": "cross-site"}):
+            with self.subTest(headers=headers):
+                for path in (f"/scan/{job_id}", f"/scan/{job_id}/result"):
+                    response = self.client.get(path, headers=headers)
+                    self.assertEqual(response.status_code, 404)
+                    self.assertEqual(
+                        response.get_json()["error"]["code"], "job_not_found"
+                    )
+
+        self.assertEqual(
+            self.client.get(f"/scan/{job_id}", headers=LEGIT).get_json()["status"],
+            "completed",
+        )
+        result = self.client.get(f"/scan/{job_id}/result", headers=LEGIT)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.data, b"%PDF-1.4\nsecret\n")
+
+    def test_jobs_started_without_an_origin_stay_with_local_tools(self):
+        job_id = self.client.post("/scan", json={}).get_json()["job_id"]
+        self.assertEqual(self.client.post("/scan", json={}).get_json()["error"]["active_job_id"], job_id)
+        self.assertNotIn(
+            "active_job_id",
+            self.client.post("/scan", json={}, headers=LEGIT).get_json()["error"],
+        )
+        self.assertEqual(
+            self.client.get(f"/scan/{job_id}", headers=LEGIT).status_code, 404
+        )
+        self.complete(job_id)
+        self.assertEqual(self.client.get(f"/scan/{job_id}/result").status_code, 200)
+
+
+class AllowListTests(JobOwnershipTests):
+    def test_unlisted_origin_is_refused_before_any_work(self):
+        preflight = self.client.options(
+            "/scan",
+            headers={**EVIL, "Access-Control-Request-Method": "POST", "Access-Control-Request-Private-Network": "true"},
+        )
+        self.assertEqual(preflight.status_code, 204)
+        self.assertEqual(preflight.headers["Access-Control-Allow-Private-Network"], "true")
+        for response in (
+            self.client.get("/health", headers=EVIL),
+            self.client.post("/scan", json={}, headers=EVIL),
+            self.client.get("/scan/anything", headers=EVIL),
+        ):
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(
+                response.get_json()["error"]["code"], "origin_not_allowed"
+            )
+            # Readable, so the page can offer to link instead of seeing a network error.
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"], EVIL["Origin"])
+        self.assertEqual(self.worker.jobs, {})
+
+        accepted = self.client.post("/scan", json={}, headers=LEGIT)
+        self.assertEqual(accepted.status_code, 202)
+        self.assertEqual(
+            accepted.headers["Access-Control-Allow-Origin"], LEGIT["Origin"]
+        )
+
+    def test_the_wildcard_no_longer_allows_every_website(self):
+        with patch("server.load_config", return_value={"cors_origins": ["*"]}):
+            app = server.create_app(self.worker, threading.Event(), {"http_enabled": True})
+        refused = app.test_client().post("/scan", json={}, headers=LEGIT)
+        self.assertEqual(refused.status_code, 403)
+        self.assertEqual(refused.get_json()["error"]["code"], "origin_not_allowed")
+
+
+if __name__ == "__main__":
+    unittest.main()

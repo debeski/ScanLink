@@ -34,6 +34,8 @@ except ImportError:
 
 logger = get_logger()
 
+PAGE_JPEG_QUALITY = 85
+
 
 class ScanError(Exception):
     def __init__(self, code, message, status="failed"):
@@ -256,12 +258,6 @@ class ScannerManager:
             return self._create_pdf(images)
         except Exception as exc:
             raise ScanError("pdf_generation_failed", f"Failed to generate PDF: {exc}") from exc
-        finally:
-            for image in images:
-                try:
-                    image.close()
-                except Exception:
-                    pass
 
     def _open_source(self, sm, config, progress_callback=None, deadline=None):
         default_scanner = config.get("default_scanner")
@@ -451,10 +447,7 @@ class ScannerManager:
                 code="acquire_timeout",
                 message="Timed out while processing the scanned page.",
             )
-            image = self._twain_image_to_pil(twain_image)
-            if image.mode != "RGB":
-                image = image.convert("RGB")
-            images.append(image)
+            images.append(self._encode_page(self._twain_image_to_pil(twain_image)))
             logger.info("Captured page %s via native transfer", len(images))
             if progress_callback:
                 progress_callback("page_scanned", page_count=len(images))
@@ -498,8 +491,7 @@ class ScannerManager:
             try:
                 with PilImage.open(temp_path) as pil_image:
                     pil_image.load()
-                    image = pil_image.convert("RGB") if pil_image.mode != "RGB" else pil_image.copy()
-                images.append(image)
+                    images.append(self._encode_page(pil_image))
                 logger.info("Captured page %s via file transfer", len(images))
                 if progress_callback:
                     progress_callback("page_scanned", page_count=len(images))
@@ -642,33 +634,52 @@ class ScannerManager:
         if deadline and time.monotonic() > deadline:
             raise ScanError(code, message, status="timed_out")
 
-    def _create_pdf(self, images):
+    def _encode_page(self, image):
+        """Compress a captured page at once; decoded A4 pages cost ~26 MB each at 300 DPI."""
+        rgb = image if image.mode == "RGB" else image.convert("RGB")
+        try:
+            buffer = io.BytesIO()
+            rgb.save(buffer, format="JPEG", quality=PAGE_JPEG_QUALITY, optimize=True)
+            return buffer.getvalue()
+        finally:
+            rgb.close()
+            if rgb is not image:
+                image.close()
+
+    def _create_pdf(self, pages):
         buffer = io.BytesIO()
         document = canvas.Canvas(buffer, pagesize=A4)
         a4_width, a4_height = A4
-
-        for image in images:
-            image_buffer = io.BytesIO()
-            image.save(image_buffer, format="JPEG", quality=85, optimize=True)
-            image_buffer.seek(0)
-
-            rl_image = reportlab_utils.ImageReader(image_buffer)
-            image_width, image_height = rl_image.getSize()
-            aspect = image_height / float(image_width)
-
-            draw_width = a4_width
-            draw_height = a4_width * aspect
-
-            if draw_height > a4_height:
-                draw_height = a4_height
-                draw_width = a4_height / aspect
-
-            x = (a4_width - draw_width) / 2.0
-            y = (a4_height - draw_height) / 2.0
-
-            document.drawImage(rl_image, x, y, width=draw_width, height=draw_height)
-            document.showPage()
+        # drawImage(filename) embeds a JPEG file as-is; an ImageReader would be
+        # decoded to raw RGB and kept until save() for image de-duplication.
+        with tempfile.TemporaryDirectory(prefix="scanlink-pages-") as directory:
+            for index, page in enumerate(pages):
+                path = os.path.join(directory, f"page-{index:04d}.jpg")
+                with open(path, "wb") as page_file:
+                    page_file.write(page)
+                try:
+                    self._draw_page(document, path, page, a4_width, a4_height)
+                finally:
+                    os.remove(path)
+                document.showPage()
 
         document.save()
         buffer.seek(0)
         return buffer
+
+    def _draw_page(self, document, path, page, a4_width, a4_height):
+        with PilImage.open(io.BytesIO(page)) as header:
+            image_width, image_height = header.size
+        aspect = image_height / float(image_width)
+
+        draw_width = a4_width
+        draw_height = a4_width * aspect
+
+        if draw_height > a4_height:
+            draw_height = a4_height
+            draw_width = a4_height / aspect
+
+        x = (a4_width - draw_width) / 2.0
+        y = (a4_height - draw_height) / 2.0
+
+        document.drawImage(path, x, y, width=draw_width, height=draw_height)

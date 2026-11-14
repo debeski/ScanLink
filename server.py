@@ -3,10 +3,11 @@ import socket
 import ssl
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from flask import Flask, Response, jsonify, request, send_file
-from werkzeug.serving import make_server
+from werkzeug.exceptions import HTTPException
+from werkzeug.serving import WSGIRequestHandler, make_server
 
 from utils import (
     APP_ARCH,
@@ -18,26 +19,49 @@ from utils import (
     get_ssl_context,
     ensure_ssl_certificates,
     load_config,
+    normalize_origin,
 )
+from sites import LinkError, SiteRegistry
 from worker import BusyError
 
 logger = get_logger()
 
+# DNS rebinding makes a foreign page same-origin with the helper, bypassing CORS,
+# so the Host header must name the loopback interface itself.
+LOOPBACK_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+# Scan requests carry a few identifiers; larger bodies would be kept with the job.
+MAX_REQUEST_BYTES = 64 * 1024
+# Per-connection socket timeout, including the TLS handshake.
+REQUEST_TIMEOUT_SECONDS = 30
 
-def create_app(worker, shutdown_event, transport_state):
+
+def is_loopback_host(host):
+    try:
+        return urlsplit(f"//{host}").hostname in LOOPBACK_HOSTNAMES
+    except ValueError:
+        return False
+
+
+def create_app(worker, shutdown_event, transport_state, sites=None):
     app = Flask(__name__)
-    config = load_config()
-    allowed_origins = config.get("cors_origins", ["*"])
+    app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
+    if sites is None:
+        config = load_config()
+        sites = SiteRegistry(config.get("cors_origins"), config.get("linked_sites"))
 
     def is_browser_endpoint(path):
-        return path == "/health" or path == "/scan" or path.startswith("/scan/")
+        return path in ("/health", "/scan", "/link") or path.startswith("/scan/")
 
-    def is_origin_allowed(origin):
-        return "*" in allowed_origins or origin in allowed_origins
+    def web_origin():
+        """The request's Origin when it is a well-formed website origin."""
+        origin = request.headers.get("Origin")
+        return origin if origin and normalize_origin(origin) == origin else None
 
     def apply_cors(response):
-        origin = request.headers.get("Origin")
-        if not origin or not is_origin_allowed(origin):
+        # Every website may read answers, so an unlinked one can see
+        # origin_not_allowed and offer to link; the work itself is gated.
+        origin = web_origin()
+        if origin is None:
             return response
 
         response.headers["Access-Control-Allow-Origin"] = origin
@@ -45,6 +69,8 @@ def create_app(worker, shutdown_event, transport_state):
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
         response.headers["Vary"] = "Origin"
+        if request.headers.get("Access-Control-Request-Private-Network") == "true":
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
         return response
 
     def empty_options_response():
@@ -93,6 +119,36 @@ def create_app(worker, shutdown_event, transport_state):
                     )
         return data, None
 
+    @app.before_request
+    def reject_foreign_host():
+        if not is_loopback_host(request.host):
+            return error_response(
+                403, "invalid_host", "ScanLink only answers requests addressed to localhost."
+            )
+        origin = request.headers.get("Origin")
+        if is_browser_endpoint(request.path):
+            gated = request.method != "OPTIONS" and request.path != "/link"
+            if gated and origin is not None and not sites.is_allowed(origin):
+                return error_response(
+                    403, "origin_not_allowed", "This website is not linked to ScanLink."
+                )
+        # Browsers send Origin or Sec-Fetch-Site; form posts need no CORS preflight.
+        elif origin is not None or "Sec-Fetch-Site" in request.headers:
+            return error_response(
+                403, "local_only", "This endpoint only accepts requests from this computer's ScanLink tools."
+            )
+        return None
+
+    @app.errorhandler(HTTPException)
+    def http_error(exc):
+        if exc.code == 413:
+            return error_response(
+                413, "payload_too_large", "Scan requests must be smaller than 64 KB."
+            )
+        return error_response(
+            exc.code, exc.name.lower().replace(" ", "_"), exc.description
+        )
+
     @app.after_request
     def add_cors_headers(response):
         if is_browser_endpoint(request.path):
@@ -104,21 +160,44 @@ def create_app(worker, shutdown_event, transport_state):
         if request.method == "OPTIONS":
             return empty_options_response()
 
-        return jsonify(
-            {
-                "status": "ok",
-                "version": APP_VERSION,
-                "arch": APP_ARCH,
-                "busy": worker.is_busy(),
-                "http_enabled": transport_state.get("http_enabled", False),
-                "https_enabled": transport_state.get("https_enabled", False),
-                "twain_available": worker.is_twain_available(),
-                "https_setup": transport_state.get(
-                    "https_setup",
-                    "ready" if transport_state.get("https_enabled") else "unavailable",
-                ),
-            }
-        )
+        payload = {
+            "status": "ok",
+            "version": APP_VERSION,
+            "arch": APP_ARCH,
+            "busy": worker.is_busy(),
+            "http_enabled": transport_state.get("http_enabled", False),
+            "https_enabled": transport_state.get("https_enabled", False),
+            "twain_available": worker.is_twain_available(),
+            "https_setup": transport_state.get(
+                "https_setup",
+                "ready" if transport_state.get("https_enabled") else "unavailable",
+            ),
+        }
+        origin = web_origin()
+        if origin is not None:
+            link = sites.link_for(origin)
+            payload["link"] = {"linked": link is not None, "sites": link["sites"] if link else []}
+        return jsonify(payload)
+
+    @app.route("/link", methods=["POST", "OPTIONS"])
+    def link_site():
+        if request.method == "OPTIONS":
+            return empty_options_response()
+        origin = web_origin()
+        if origin is None:
+            return error_response(
+                400, "origin_required", "Only a website can link itself, and its origin must be sent."
+            )
+        data = request.get_json(silent=True) if request.is_json else None
+        if not isinstance(data, dict):
+            return error_response(
+                400, "invalid_payload", "Link requests must contain a JSON object with a sites list."
+            )
+        try:
+            result = sites.link(origin, data.get("sites"))
+        except LinkError as exc:
+            return error_response(exc.status, exc.code, exc.message)
+        return jsonify(result)
 
     @app.route("/scan", methods=["POST", "OPTIONS"])
     def start_scan():
@@ -138,13 +217,15 @@ def create_app(worker, shutdown_event, transport_state):
                 callback_url=callback_url,
                 metadata=data.get("metadata"),
                 source="api",
+                origin=request.headers.get("Origin"),
             )
         except BusyError as exc:
+            extra = {"active_job_id": exc.active_job_id} if exc.active_job_id else {}
             return error_response(
                 409,
                 "busy",
                 "Another scan job is already queued or running.",
-                active_job_id=exc.active_job_id,
+                **extra,
             )
 
         return jsonify({"job_id": job["job_id"], "status": "queued"}), 202
@@ -154,7 +235,7 @@ def create_app(worker, shutdown_event, transport_state):
         if request.method == "OPTIONS":
             return empty_options_response()
 
-        job = worker.get_job(job_id)
+        job = worker.get_job(job_id, origin=request.headers.get("Origin"))
         if not job:
             return error_response(
                 404, "job_not_found", "The requested scan job was not found."
@@ -166,7 +247,8 @@ def create_app(worker, shutdown_event, transport_state):
         if request.method == "OPTIONS":
             return empty_options_response()
 
-        job = worker.get_job(job_id)
+        origin = request.headers.get("Origin")
+        job = worker.get_job(job_id, origin=origin)
         if not job:
             return error_response(
                 404, "job_not_found", "The requested scan job was not found."
@@ -179,7 +261,7 @@ def create_app(worker, shutdown_event, transport_state):
                 current_status=job["status"],
             )
 
-        updated_job, result_bytes = worker.consume_result(job_id)
+        updated_job, result_bytes = worker.consume_result(job_id, origin=origin)
         if not updated_job:
             return error_response(
                 404, "job_not_found", "The requested scan job was not found."
@@ -254,6 +336,23 @@ def emit_scan_status(job_id, status, **kwargs):
     return None
 
 
+class LoopbackRequestHandler(WSGIRequestHandler):
+    def setup(self):
+        self.timeout = REQUEST_TIMEOUT_SECONDS
+        super().setup()
+
+    def handle(self):
+        # The listener accepts without handshaking, so a client that never sends
+        # a TLS hello only holds its own thread, and only until the timeout.
+        if isinstance(self.connection, ssl.SSLSocket):
+            try:
+                self.connection.do_handshake()
+            except OSError as exc:
+                logger.debug("TLS handshake from %s failed: %s", self.client_address, exc)
+                return
+        super().handle()
+
+
 class LoopbackServer(threading.Thread):
     def __init__(self, app, host, port, ssl_context=None, label="HTTP"):
         super().__init__(daemon=True)
@@ -278,8 +377,11 @@ class LoopbackServer(threading.Thread):
                 self.port,
                 self.app,
                 threaded=True,
+                request_handler=LoopbackRequestHandler,
                 ssl_context=self.ssl_context,
             )
+            if self.ssl_context is not None:
+                self.httpd.socket.do_handshake_on_connect = False
             logger.info("%s listener ready on %s:%s", self.label, self.host, self.port)
         except Exception as exc:
             self.error = exc
@@ -306,14 +408,14 @@ class LoopbackServer(threading.Thread):
             self.httpd.shutdown()
 
 
-def run_server(worker, shutdown_event, https_retry_event=None, on_https_error=None):
+def run_server(worker, shutdown_event, https_retry_event=None, on_https_error=None, sites=None):
     retry = https_retry_event or threading.Event()
     transport_state = {
         "http_enabled": False,
         "https_enabled": False,
         "https_setup": "preparing",
     }
-    app = create_app(worker, shutdown_event, transport_state)
+    app = create_app(worker, shutdown_event, transport_state, sites)
     listeners = []
     http_listener = LoopbackServer(app, HTTP_HOST, HTTP_PORT, label="HTTP")
     http_listener.start()

@@ -172,6 +172,7 @@ def build_pyinstaller_args(build_name):
         "--hidden-import=PIL.Image",
         "--hidden-import=PIL.ImageDraw",
         "--hidden-import=protocol_handler",
+        "--hidden-import=sites",
         "--hidden-import=flask",
         "--hidden-import=werkzeug",
         "--hidden-import=jinja2",

@@ -67,6 +67,17 @@ worker.py
 
 This subprocess boundary protects the tray/API process from scanner driver crashes, stuck TWAIN calls, and long-running acquisition operations.
 
+`scan_runtime.run_scan_job()` only runs in a `scanlink-job-*` directory directly
+inside the user's temp directory, the only kind `ScanWorker` creates. Any other
+`--scan-worker-dir` value, such as one injected through an unescaped
+`scanlink://` launch or a network share path, exits with code 1 before reading
+or writing anything.
+
+The child compresses each page to JPEG (quality 85) as soon as it is captured and
+embeds those JPEG files in the PDF unchanged, so its memory grows with the
+compressed page size rather than with decoded images (about 26 MB per A4 page at
+300 DPI color). Long ADF batches therefore fit in a 32-bit (x86) build.
+
 ## Thread Model
 
 Main process:
@@ -125,7 +136,8 @@ Defaults are provided in `utils.load_config()`:
   "default_scanner": null,
   "show_scanner_ui": false,
   "paper_protection": false,
-  "cors_origins": ["*"],
+  "cors_origins": [],
+  "linked_sites": {},
   "job_ttl_seconds": 900,
   "result_ttl_seconds": 300,
   "scan_timeout_seconds": 600,
@@ -157,6 +169,13 @@ HTTPS:
 ```text
 127.0.0.1:5443
 ```
+
+Each listener is a threaded werkzeug server that serves one connection per
+thread. Its `LoopbackRequestHandler` applies a 30-second socket timeout
+(`REQUEST_TIMEOUT_SECONDS` in `server.py`) to every connection, and the HTTPS
+listener performs the TLS handshake in that connection's thread rather than in
+the accept loop, so an idle or slow client only holds its own thread until the
+timeout and never blocks other clients.
 
 On normal startup the server thread starts HTTP first, then prepares a trusted
 HTTPS identity automatically. A one-year self-signed **server** certificate
@@ -200,8 +219,8 @@ When launched with a `scanlink://` URL:
 
 1. `main.py` parses the URL with `protocol_handler.parse_protocol_url()`.
 2. It tries to forward the command to `http://127.0.0.1:5000/internal/protocol/scan`.
-3. If forwarding succeeds, the new process exits.
-4. If no instance is running, the new process becomes the tray instance and queues the protocol scan after startup.
+3. If forwarding succeeds, the new process exits. Forwarding succeeds only on a ScanLink answer: `202` with a `job_id`, or `409` with error code `busy`.
+4. If no instance is running, the new process becomes the tray instance and queues the protocol scan after startup. An instance counts as running only when `/health` returns ScanLink's JSON (`status: ok` with `version` and `twain_available`), so another program answering on port 5000 does not make ScanLink exit.
 
 This prevents duplicate tray apps and competing scanner sessions.
 

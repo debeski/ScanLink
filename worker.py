@@ -17,11 +17,14 @@ except ImportError:
     requests = None
 
 from scanner import ScanError, ScannerManager
-from utils import get_logger, load_config
+from utils import SCAN_JOB_DIRECTORY_PREFIX, get_logger, load_config
 
 logger = get_logger()
 
 TERMINAL_STATUSES = {"completed", "failed", "cancelled", "timed_out"}
+# get_job()/consume_result() default for in-process callers; the server always
+# passes the requesting browser Origin (None for local tools).
+ANY_ORIGIN = object()
 # Covers child startup and a graceful TWAIN close after the child's own deadline.
 SCAN_TIMEOUT_GRACE_SECONDS = 15
 
@@ -80,12 +83,16 @@ class ScanWorker(threading.Thread):
         self.scan_idle_timeout_seconds = int(config.get("scan_idle_timeout_seconds", 45))
         self.scan_timeout_grace_seconds = SCAN_TIMEOUT_GRACE_SECONDS
 
-    def submit_job(self, doc_id=None, callback_url=None, metadata=None, source="api"):
+    def submit_job(
+        self, doc_id=None, callback_url=None, metadata=None, source="api", origin=None
+    ):
         with self.jobs_lock:
             self._cleanup_expired_jobs_locked()
             active_job_id = self._find_active_job_id_locked()
             if active_job_id:
-                raise BusyError(active_job_id=active_job_id)
+                active_job = self.jobs.get(active_job_id) or {}
+                owned = active_job.get("origin") == origin
+                raise BusyError(active_job_id=active_job_id if owned else None)
 
             job_id = str(uuid.uuid4())
             now = time.time()
@@ -103,6 +110,7 @@ class ScanWorker(threading.Thread):
                 "result_bytes": None,
                 "result_retrieved_at": None,
                 "source": source,
+                "origin": origin,
                 "error": None,
             }
 
@@ -111,16 +119,16 @@ class ScanWorker(threading.Thread):
         emit_status(job_id, "queued", doc_id=doc_id)
         return self.get_job(job_id)
 
-    def get_job(self, job_id):
+    def get_job(self, job_id, origin=ANY_ORIGIN):
         with self.jobs_lock:
             self._cleanup_expired_jobs_locked()
-            job = self.jobs.get(job_id)
+            job = self._visible_job_locked(job_id, origin)
             return self._serialize_job(job) if job else None
 
-    def consume_result(self, job_id):
+    def consume_result(self, job_id, origin=ANY_ORIGIN):
         with self.jobs_lock:
             self._cleanup_expired_jobs_locked()
-            job = self.jobs.get(job_id)
+            job = self._visible_job_locked(job_id, origin)
             if not job:
                 return None, None
 
@@ -255,7 +263,7 @@ class ScanWorker(threading.Thread):
         return self._execute_gui(func, timeout=timeout)
 
     def _run_scan_subprocess(self, job_id, on_progress):
-        work_dir = tempfile.mkdtemp(prefix="scanlink-job-")
+        work_dir = tempfile.mkdtemp(prefix=SCAN_JOB_DIRECTORY_PREFIX)
         state_path = os.path.join(work_dir, "state.json")
         result_path = os.path.join(work_dir, "result.pdf")
         request_path = os.path.join(work_dir, "request.json")
@@ -435,6 +443,12 @@ class ScanWorker(threading.Thread):
                 )
         except Exception as exc:
             logger.error(f"Callback error for job {job['job_id']}: {exc}")
+
+    def _visible_job_locked(self, job_id, origin):
+        job = self.jobs.get(job_id)
+        if job and origin is not ANY_ORIGIN and job.get("origin") != origin:
+            return None
+        return job
 
     def _find_active_job_id_locked(self):
         if self.current_job_id:

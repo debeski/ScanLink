@@ -191,8 +191,9 @@ Downloading `/scan/<job_id>/result` consumes the stored PDF. A second download f
 
 ## Operational Notes
 
-- The API is bound to `127.0.0.1`, not a public network interface.
-- CORS defaults to `["*"]` in `%LOCALAPPDATA%\ScanLink\config.json`.
+- The API is bound to `127.0.0.1`, not a public network interface, and answers only requests whose `Host` is `localhost`, `127.0.0.1` or `[::1]`.
+- No website can scan until it is allowed: the operator approves a website once through [`POST /link`](api.md#post-link), or IT lists it in `cors_origins` in `%LOCALAPPDATA%\ScanLink\config.json`; see [Allowed websites](api.md#allowed-websites). The bundled client's `link(sites)` sends the request, and its `checkHealth()` reports `origin_not_allowed` for a website that is not allowed yet.
+- A scan job belongs to the `Origin` that started it; poll status and download the result from the same page origin.
 - The first scan may show a scanner selection dialog.
 - If the user selects "Set as default scanner", later scans skip scanner selection.
 - Tray settings control source, side, color mode, resolution, scanner UI visibility, paper protection, startup, and diagnostics.
