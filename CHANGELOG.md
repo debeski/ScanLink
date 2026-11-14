@@ -9,6 +9,7 @@ This file owns the release history for `ScanLink`.
 - **Scan Ownership By Origin**: `ScanWorker.submit_job()` records the requesting `Origin`; `GET /scan/<job_id>` and `/result` answer `404 job_not_found` to any other origin, and `409 busy` includes `active_job_id` only for the job's own origin, so a website can no longer learn, follow and download another website's scan.
 - **Server-Side Origin Allow-List**: Browser-endpoint requests, including preflights, from an `Origin` outside a configured `cors_origins` list are refused with `403 origin_not_allowed` before any work, instead of only omitting CORS headers.
 - **Request Body Limit**: `MAX_CONTENT_LENGTH` is 64 KB, answered as `413 payload_too_large`; a 64 MB `metadata` body was previously accepted, kept with the job for its 15-minute TTL and returned by every status poll. HTTP errors (`404`, `405`, `413`, `500`) now use the JSON error shape with CORS headers.
+- **Private Network Access Preflight**: Allowed-origin preflights carrying `Access-Control-Request-Private-Network: true` receive `Access-Control-Allow-Private-Network: true`.
 
 ## v0.8.0b2
 

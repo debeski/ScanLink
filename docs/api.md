@@ -221,6 +221,8 @@ Allowed origins come from `%LOCALAPPDATA%\ScanLink\config.json`:
 }
 ```
 
+Preflights that carry `Access-Control-Request-Private-Network: true` from an allowed origin are answered with `Access-Control-Allow-Private-Network: true`, as Chromium's Private Network Access requires for a public website calling the loopback helper.
+
 When `cors_origins` is not `["*"]`, the request `Origin` must exactly match an entry in the list. Browser-endpoint requests from any other `Origin`, including preflights, receive `403 origin_not_allowed` before any work is done.
 
 With the default `["*"]`, every website the operator opens can call `/health` and `/scan` and download the scans it starts itself. Job ownership keeps each website away from scans started by others. List the DjangoLux origins in `cors_origins` to restrict which websites can scan.

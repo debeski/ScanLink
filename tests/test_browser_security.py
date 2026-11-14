@@ -133,6 +133,30 @@ class BrowserSecurityTests(unittest.TestCase):
             self.assertEqual(response.mimetype, "application/json")
             self.assertTrue(response.get_json()["error"]["message"])
 
+    def test_private_network_preflight_is_answered_for_allowed_origins(self):
+        for path in ("/health", "/scan", "/scan/job-1", "/scan/job-1/result"):
+            with self.subTest(path=path):
+                response = self.client.options(
+                    path,
+                    headers={
+                        **LEGIT,
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "content-type",
+                        "Access-Control-Request-Private-Network": "true",
+                    },
+                )
+                self.assertEqual(response.status_code, 204)
+                self.assertEqual(
+                    response.headers["Access-Control-Allow-Private-Network"], "true"
+                )
+                self.assertEqual(
+                    response.headers["Access-Control-Allow-Origin"], LEGIT["Origin"]
+                )
+        plain = self.client.options(
+            "/scan", headers={**LEGIT, "Access-Control-Request-Method": "POST"}
+        )
+        self.assertNotIn("Access-Control-Allow-Private-Network", plain.headers)
+
     def test_local_tools_keep_local_control_endpoints(self):
         protocol = self.client.post("/internal/protocol/scan", json={"action": "scan"})
         shutdown = self.client.post("/shutdown")

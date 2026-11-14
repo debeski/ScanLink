@@ -60,6 +60,8 @@ def create_app(worker, shutdown_event, transport_state):
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
         response.headers["Vary"] = "Origin"
+        if request.headers.get("Access-Control-Request-Private-Network") == "true":
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
         return response
 
     def empty_options_response():
