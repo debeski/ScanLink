@@ -110,6 +110,13 @@ def create_app(worker, shutdown_event, transport_state):
             return error_response(
                 403, "invalid_host", "ScanLink only answers requests addressed to localhost."
             )
+        # Browsers send Origin or Sec-Fetch-Site; form posts need no CORS preflight.
+        if not is_browser_endpoint(request.path) and (
+            "Origin" in request.headers or "Sec-Fetch-Site" in request.headers
+        ):
+            return error_response(
+                403, "local_only", "This endpoint only accepts requests from this computer's ScanLink tools."
+            )
         return None
 
     @app.after_request

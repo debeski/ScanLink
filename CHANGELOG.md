@@ -5,6 +5,7 @@ This file owns the release history for `ScanLink`.
 ## Unreleased
 
 - **Loopback Host Check**: `server.create_app()` refuses every request whose `Host` header is not `localhost`, `127.0.0.1` or `[::1]` with `403 invalid_host`, so a DNS-rebound page cannot reach the API as a same-origin client.
+- **Local-Only Control Endpoints**: `POST /shutdown` and `POST /internal/protocol/scan` refuse any request carrying `Origin` or `Sec-Fetch-Site` with `403 local_only`, so a cross-site form post can no longer shut ScanLink down; the protocol forwarder and local scripts send neither header.
 
 ## v0.8.0b2
 

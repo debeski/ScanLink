@@ -60,6 +60,38 @@ class BrowserSecurityTests(unittest.TestCase):
                 response = self.client.get("/health", headers={"Host": host})
                 self.assertEqual(response.status_code, 200)
 
+    def test_browser_requests_cannot_use_local_control_endpoints(self):
+        browser_headers = (
+            {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"},
+            {"Origin": "null"},
+            {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate"},
+        )
+        for headers in browser_headers:
+            with self.subTest(headers=headers):
+                shutdown = self.client.post(
+                    "/shutdown",
+                    data="x=1",
+                    content_type="application/x-www-form-urlencoded",
+                    headers=headers,
+                )
+                protocol = self.client.post(
+                    "/internal/protocol/scan", json={"action": "scan"}, headers=headers
+                )
+                for response in (shutdown, protocol):
+                    self.assertEqual(response.status_code, 403)
+                    self.assertEqual(
+                        response.get_json()["error"]["code"], "local_only"
+                    )
+        self.assertFalse(self.shutdown_event.is_set())
+        self.assertEqual(self.worker.jobs, {})
+
+    def test_local_tools_keep_local_control_endpoints(self):
+        protocol = self.client.post("/internal/protocol/scan", json={"action": "scan"})
+        shutdown = self.client.post("/shutdown")
+        self.assertEqual(protocol.status_code, 202)
+        self.assertEqual(shutdown.status_code, 200)
+        self.assertTrue(self.shutdown_event.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()

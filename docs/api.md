@@ -174,6 +174,8 @@ Internal endpoint used by `scanlink://` launches to forward commands into an alr
 
 Requests ScanLink shutdown. This is intended for local control, not browser integrations.
 
+`/shutdown` and `/internal/protocol/scan` refuse browser requests: any request carrying an `Origin` or `Sec-Fetch-Site` header receives `403 local_only`. Local tools such as the protocol forwarder, PowerShell or `curl` send neither header.
+
 ## Scan Error Codes
 
 Errors from the scanner/runtime layer can appear inside the job `error` object:
