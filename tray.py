@@ -96,8 +96,9 @@ def format_color_mode(value):
 
 
 class TrayApp:
-    def __init__(self, worker, shutdown_event, https_retry_event=None):
+    def __init__(self, worker, shutdown_event, https_retry_event=None, sites=None):
         self.worker = worker
+        self.sites = sites
         self.shutdown_event = shutdown_event
         self.icon = None
         self.https_retry_event = https_retry_event or threading.Event()
@@ -246,6 +247,25 @@ class TrayApp:
             if self.icon:
                 self.icon.update_menu()
 
+        def unlink_site(origin):
+            def handler(icon, item):
+                if self.sites:
+                    self.sites.unlink(origin)
+                if self.icon:
+                    self.icon.update_menu()
+
+            return handler
+
+        def linked_site_items():
+            links = self.sites.links() if self.sites else {}
+            if not links:
+                yield MenuItem("No linked websites", None, enabled=False)
+                return
+            for origin, allowed in sorted(links.items()):
+                others = len(allowed) - 1
+                label = origin if not others else f"{origin} (+{others} site{'s' if others != 1 else ''})"
+                yield MenuItem(label, Menu(MenuItem("Unlink", unlink_site(origin))))
+
         resolution_menu = Menu(
             MenuItem("160 DPI", set_resolution(160), checked=resolution_checked(160), radio=True, enabled=resolution_enabled),
             MenuItem("200 DPI", set_resolution(200), checked=resolution_checked(200), radio=True, enabled=resolution_enabled),
@@ -317,6 +337,7 @@ class TrayApp:
             ),
             MenuItem("Clear Default Scanner", clear_default_scanner, enabled=lambda item: not self.worker.is_busy()),
             MenuItem("Diagnostics", diagnostics_menu),
+            MenuItem("Linked Websites", Menu(linked_site_items)),
             Menu.SEPARATOR,
             MenuItem("Run on Startup", on_startup_toggle, checked=lambda item: is_startup_enabled()),
             MenuItem("Quit", on_quit),

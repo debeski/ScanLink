@@ -17,7 +17,7 @@ except ImportError:
 
 @unittest.skipIf(server is None, "Flask is not installed in this environment")
 class BrowserSecurityTests(unittest.TestCase):
-    cors_origins = ["*"]
+    cors_origins = ["https://archive.example"]
 
     def setUp(self):
         self.worker = FakeWorker()
@@ -171,7 +171,7 @@ EVIL = {"Origin": "https://evil.example"}
 
 @unittest.skipIf(server is None, "Flask is not installed in this environment")
 class JobOwnershipTests(unittest.TestCase):
-    cors_origins = ["*"]
+    cors_origins = ["https://archive.example", "https://crm.example"]
 
     def setUp(self):
         config = patch(
@@ -236,15 +236,14 @@ class JobOwnershipTests(unittest.TestCase):
 
 
 class AllowListTests(JobOwnershipTests):
-    cors_origins = ["https://archive.example", "https://crm.example"]
-
     def test_unlisted_origin_is_refused_before_any_work(self):
         preflight = self.client.options(
             "/scan",
-            headers={**EVIL, "Access-Control-Request-Method": "POST"},
+            headers={**EVIL, "Access-Control-Request-Method": "POST", "Access-Control-Request-Private-Network": "true"},
         )
+        self.assertEqual(preflight.status_code, 204)
+        self.assertEqual(preflight.headers["Access-Control-Allow-Private-Network"], "true")
         for response in (
-            preflight,
             self.client.get("/health", headers=EVIL),
             self.client.post("/scan", json={}, headers=EVIL),
             self.client.get("/scan/anything", headers=EVIL),
@@ -253,7 +252,8 @@ class AllowListTests(JobOwnershipTests):
             self.assertEqual(
                 response.get_json()["error"]["code"], "origin_not_allowed"
             )
-            self.assertNotIn("Access-Control-Allow-Origin", response.headers)
+            # Readable, so the page can offer to link instead of seeing a network error.
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"], EVIL["Origin"])
         self.assertEqual(self.worker.jobs, {})
 
         accepted = self.client.post("/scan", json={}, headers=LEGIT)
@@ -261,6 +261,13 @@ class AllowListTests(JobOwnershipTests):
         self.assertEqual(
             accepted.headers["Access-Control-Allow-Origin"], LEGIT["Origin"]
         )
+
+    def test_the_wildcard_no_longer_allows_every_website(self):
+        with patch("server.load_config", return_value={"cors_origins": ["*"]}):
+            app = server.create_app(self.worker, threading.Event(), {"http_enabled": True})
+        refused = app.test_client().post("/scan", json={}, headers=LEGIT)
+        self.assertEqual(refused.status_code, 403)
+        self.assertEqual(refused.get_json()["error"]["code"], "origin_not_allowed")
 
 
 if __name__ == "__main__":

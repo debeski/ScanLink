@@ -43,9 +43,15 @@ Response:
   "busy": false,
   "http_enabled": true,
   "https_enabled": false,
-  "twain_available": true
+  "twain_available": true,
+  "link": {"linked": true, "sites": ["https://archive.example", "https://crm.example"]}
 }
 ```
+
+`link` describes the requesting website: whether it is linked itself and, if so,
+the sites its link allows. A website allowed only through `cors_origins` or
+another site's list reports `{"linked": false, "sites": []}`. Requests without
+`Origin` receive no `link`.
 
 ## POST /scan
 
@@ -204,28 +210,78 @@ Errors from the scanner/runtime layer can appear inside the job `error` object:
 | `scan_worker_crashed` | Child scan process exited unexpectedly. |
 | `unexpected_error` | Unhandled worker exception. |
 
-## CORS
+## Allowed websites
 
-Browser endpoints support CORS for:
-
-- `/health`
-- `/scan`
-- `/scan/<job_id>`
-- `/scan/<job_id>/result`
-
-Allowed origins come from `%LOCALAPPDATA%\ScanLink\config.json`:
+A website may use the browser endpoints when it is listed in
+`%LOCALAPPDATA%\ScanLink\config.json` or linked:
 
 ```json
 {
-  "cors_origins": ["*"]
+  "cors_origins": ["https://archive.example"],
+  "linked_sites": {
+    "https://archive.example": {
+      "sites": ["https://archive.example", "https://crm.example"],
+      "linked_at": "2026-11-14T12:00:00Z"
+    }
+  }
 }
 ```
 
-Preflights that carry `Access-Control-Request-Private-Network: true` from an allowed origin are answered with `Access-Control-Allow-Private-Network: true`, as Chromium's Private Network Access requires for a public website calling the loopback helper.
+- `cors_origins` is set by hand or by IT and needs a restart. It is empty by
+  default. Entries must be website origins (`scheme://host[:port]`); `"*"` and
+  other wildcards are ignored, so no setting lets every website scan.
+- `linked_sites` is written by [`POST /link`](#post-link) after the operator
+  approves a website, and by the tray menu's **Linked Websites → Unlink**. Each
+  linked website allows itself and the sites in its `sites` list.
 
-When `cors_origins` is not `["*"]`, the request `Origin` must exactly match an entry in the list. Browser-endpoint requests from any other `Origin`, including preflights, receive `403 origin_not_allowed` before any work is done.
+Every browser endpoint answers CORS for any well-formed `Origin`, including
+preflights, so an unlinked website can read why it was refused. Requests from a
+website that is neither listed nor linked receive `403 origin_not_allowed` before
+any work is done; only `POST /link` is open to every website. Preflights carrying
+`Access-Control-Request-Private-Network: true` are answered with
+`Access-Control-Allow-Private-Network: true`, as Chromium's Private Network
+Access requires for a public website calling the loopback helper.
 
-With the default `["*"]`, every website the operator opens can call `/health` and `/scan` and download the scans it starts itself. Job ownership keeps each website away from scans started by others. List the DjangoLux origins in `cors_origins` to restrict which websites can scan.
+Job ownership keeps each allowed website away from scans started by others.
+
+## POST /link
+
+Asks to link the requesting website, named by the browser's `Origin` header.
+
+Request:
+
+```json
+{
+  "sites": ["https://crm.example"]
+}
+```
+
+`sites` lists the other websites the requesting site's administrator allows, at
+most 19; the requesting site is always included. An unlinked website opens an
+approval window in ScanLink naming it and its list, and the request waits up to
+two minutes for the operator's answer. A website that is already linked replaces
+its list without asking again.
+
+Success:
+
+```json
+{
+  "linked": true,
+  "prompted": true,
+  "sites": ["https://archive.example", "https://crm.example"]
+}
+```
+
+Errors:
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| `400` | `origin_required` | No well-formed `Origin` (local tools and `Origin: null` cannot link). |
+| `400` | `invalid_payload`, `invalid_sites`, `invalid_site`, `too_many_sites` | The body is not `{"sites": [origins]}` with at most 19 website origins. |
+| `403` | `link_declined` | The operator chose **Don't allow**; the website cannot ask again for 10 minutes. |
+| `408` | `link_timeout` | Nobody answered the window within two minutes. |
+| `409` | `link_pending` | Another website's approval window is open. |
+| `409` | `too_many_links` | 50 websites are linked; unlink one first. |
 
 ## Automatic HTTPS setup status (0.7.5b1)
 

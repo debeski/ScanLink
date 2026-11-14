@@ -73,7 +73,7 @@ class ServerTests(unittest.TestCase):
         self.transport_state = {"http_enabled": True, "https_enabled": False}
         self.shutdown_event = threading.Event()
         self.config_patch = patch(
-            "server.load_config", return_value={"cors_origins": ["*"]}
+            "server.load_config", return_value={"cors_origins": ["http://localhost:82"]}
         )
         self.config_patch.start()
         self.app = server.create_app(

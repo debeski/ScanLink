@@ -22,13 +22,13 @@
 - Windows x64/x86 unit/build/install gates passed, including real certificate consent, DPAPI/trust, 120 verified HTTPS requests per architecture and restart identity reuse. Real Windows browser/scanner and enterprise-policy acceptance remain manual.
 - Target PaperStream fi-6230Z may expose only 32-bit TWAIN; live driver compliance/output quality remain unverified. Back-only and blank-page discard remain unsupported.
 - Organization/browser policies may refuse user-installed trust. A denied setup is reported as failure and retried with the same identity, without repeated automatic dialogs.
-- Default `cors_origins: ["*"]` (persisted in existing config.json files) lets any website the operator opens start a scan and download it; silent once a default scanner is saved. Ownership now blocks cross-site theft; closing the rest (first-use origin approval or provisioned DjangoLux origins) needs an owner decision.
+- Owner decision 2026-11-14: DjangoLux supplies its sites (admin's choice). Done on `0.8/stress_fixes`: no wildcard, `POST /link` with a one-time approval window naming the browser's origin, tray **Linked Websites** to unlink; paired DjangoLux `1.16/scanlink_sites` sends the admin's list. Every upgrading operator approves each site once. The window is English-only, like the rest of ScanLink's UI.
 - Contract gaps on the DjangoLux side: `scan_button.js` gives up after 5 min while ScanLink's deadline is 600+15 s (no cancel endpoint; retry reports busy, PDF orphaned 300 s); `no_pages_scanned`, `scan_idle_timeout`, `acquire_failed`, `scan_worker_crashed`, `origin_not_allowed`, `payload_too_large` show ScanLink's English message.
 - Callbacks are never delivered (since 36249b6, 2026-04-28): `_process_job` passes the serialized job, which omits `callback_url`, to `_send_callback`. Docs promise delivery; enabling it changes production behavior and needs an owner decision. Any re-enable must restrict callback hosts: any page or `scanlink://` link can set `callback_url`.
 
 ### Active & Pending Tasks
 - [x] 0.8.0b2 merged to main via PR3 (063269b, 2026-10-30; CI 3/3 PASS): 15s parent scan-deadline grace, callback parse guard, per-scan `/health` in `scanlink.js`. Untagged; tagging/publishing needs owner OK.
-- [ ] Review/merge `0.8/stress_fixes` (10 fix commits, 63 tests); then decide the `["*"]` default and the DjangoLux timeout/error-code mapping.
+- [ ] Review/merge `0.8/stress_fixes` (PR #5: 10 fix commits + site linking, 78 tests) with DjangoLux #71 and `1.16/scanlink_sites`; then ScanLink 0.8.0b3 (owner OK to tag).
 - [ ] Mirror the per-scan health check in DjangoLux `scan_button.js` if it shares the stale-transport logic.
 - [x] 2026-10-30: retired `0.7/automatic_https`, `0.8/stress_fixes`, `0.8/stress_followups` (checkouts removed, branches deleted locally/GitHub; leftovers in `.xclude/retired-worktrees/2026-10-30/`). Only `main` remains.
 - [x] Paired deeper stress and real-worker regressions pass; candidate0.8.0b1 prepared locally. Owner authorized next beta; PR2 merged after x86/x64 native CI PASS, release gates PASS, both installers published.

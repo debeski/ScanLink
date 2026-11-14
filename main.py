@@ -15,8 +15,9 @@ from protocol_handler import (
 )
 from scan_runtime import run_scan_job
 from server import run_server
+from sites import LINK_PROMPT_SECONDS, SiteRegistry
 from tray import TrayApp
-from utils import APP_VERSION, ensure_ssl_certificates, get_logger, setup_logging
+from utils import APP_VERSION, ensure_ssl_certificates, get_logger, load_config, setup_logging
 from worker import ScanWorker, set_status_callback
 
 
@@ -87,13 +88,24 @@ def main():
 
     set_status_callback(None)
 
-    tray = TrayApp(worker, shutdown_event, https_retry_event)
+    def confirm_link(origin, other_sites):
+        from gui.dialogs import confirm_site_link
+
+        return worker.run_gui_task(
+            lambda: confirm_site_link(origin, other_sites, LINK_PROMPT_SECONDS),
+            timeout=LINK_PROMPT_SECONDS + 15,
+        )
+
+    config = load_config()
+    sites = SiteRegistry(config["cors_origins"], config["linked_sites"], confirm=confirm_link)
+
+    tray = TrayApp(worker, shutdown_event, https_retry_event, sites=sites)
 
     worker.start()
 
     server_thread = threading.Thread(
         target=run_server,
-        args=(worker, shutdown_event, https_retry_event, offer_https_retry),
+        args=(worker, shutdown_event, https_retry_event, offer_https_retry, sites),
         daemon=True,
         name="LoopbackServerManager",
     )

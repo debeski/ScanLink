@@ -19,7 +19,9 @@ from utils import (
     get_ssl_context,
     ensure_ssl_certificates,
     load_config,
+    normalize_origin,
 )
+from sites import LinkError, SiteRegistry
 from worker import BusyError
 
 logger = get_logger()
@@ -40,21 +42,26 @@ def is_loopback_host(host):
         return False
 
 
-def create_app(worker, shutdown_event, transport_state):
+def create_app(worker, shutdown_event, transport_state, sites=None):
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
-    config = load_config()
-    allowed_origins = config.get("cors_origins", ["*"])
+    if sites is None:
+        config = load_config()
+        sites = SiteRegistry(config.get("cors_origins"), config.get("linked_sites"))
 
     def is_browser_endpoint(path):
-        return path == "/health" or path == "/scan" or path.startswith("/scan/")
+        return path in ("/health", "/scan", "/link") or path.startswith("/scan/")
 
-    def is_origin_allowed(origin):
-        return "*" in allowed_origins or origin in allowed_origins
+    def web_origin():
+        """The request's Origin when it is a well-formed website origin."""
+        origin = request.headers.get("Origin")
+        return origin if origin and normalize_origin(origin) == origin else None
 
     def apply_cors(response):
-        origin = request.headers.get("Origin")
-        if not origin or not is_origin_allowed(origin):
+        # Every website may read answers, so an unlinked one can see
+        # origin_not_allowed and offer to link; the work itself is gated.
+        origin = web_origin()
+        if origin is None:
             return response
 
         response.headers["Access-Control-Allow-Origin"] = origin
@@ -120,9 +127,10 @@ def create_app(worker, shutdown_event, transport_state):
             )
         origin = request.headers.get("Origin")
         if is_browser_endpoint(request.path):
-            if origin is not None and not is_origin_allowed(origin):
+            gated = request.method != "OPTIONS" and request.path != "/link"
+            if gated and origin is not None and not sites.is_allowed(origin):
                 return error_response(
-                    403, "origin_not_allowed", "This website is not allowed to use ScanLink."
+                    403, "origin_not_allowed", "This website is not linked to ScanLink."
                 )
         # Browsers send Origin or Sec-Fetch-Site; form posts need no CORS preflight.
         elif origin is not None or "Sec-Fetch-Site" in request.headers:
@@ -152,21 +160,44 @@ def create_app(worker, shutdown_event, transport_state):
         if request.method == "OPTIONS":
             return empty_options_response()
 
-        return jsonify(
-            {
-                "status": "ok",
-                "version": APP_VERSION,
-                "arch": APP_ARCH,
-                "busy": worker.is_busy(),
-                "http_enabled": transport_state.get("http_enabled", False),
-                "https_enabled": transport_state.get("https_enabled", False),
-                "twain_available": worker.is_twain_available(),
-                "https_setup": transport_state.get(
-                    "https_setup",
-                    "ready" if transport_state.get("https_enabled") else "unavailable",
-                ),
-            }
-        )
+        payload = {
+            "status": "ok",
+            "version": APP_VERSION,
+            "arch": APP_ARCH,
+            "busy": worker.is_busy(),
+            "http_enabled": transport_state.get("http_enabled", False),
+            "https_enabled": transport_state.get("https_enabled", False),
+            "twain_available": worker.is_twain_available(),
+            "https_setup": transport_state.get(
+                "https_setup",
+                "ready" if transport_state.get("https_enabled") else "unavailable",
+            ),
+        }
+        origin = web_origin()
+        if origin is not None:
+            link = sites.link_for(origin)
+            payload["link"] = {"linked": link is not None, "sites": link["sites"] if link else []}
+        return jsonify(payload)
+
+    @app.route("/link", methods=["POST", "OPTIONS"])
+    def link_site():
+        if request.method == "OPTIONS":
+            return empty_options_response()
+        origin = web_origin()
+        if origin is None:
+            return error_response(
+                400, "origin_required", "Only a website can link itself, and its origin must be sent."
+            )
+        data = request.get_json(silent=True) if request.is_json else None
+        if not isinstance(data, dict):
+            return error_response(
+                400, "invalid_payload", "Link requests must contain a JSON object with a sites list."
+            )
+        try:
+            result = sites.link(origin, data.get("sites"))
+        except LinkError as exc:
+            return error_response(exc.status, exc.code, exc.message)
+        return jsonify(result)
 
     @app.route("/scan", methods=["POST", "OPTIONS"])
     def start_scan():
@@ -377,14 +408,14 @@ class LoopbackServer(threading.Thread):
             self.httpd.shutdown()
 
 
-def run_server(worker, shutdown_event, https_retry_event=None, on_https_error=None):
+def run_server(worker, shutdown_event, https_retry_event=None, on_https_error=None, sites=None):
     retry = https_retry_event or threading.Event()
     transport_state = {
         "http_enabled": False,
         "https_enabled": False,
         "https_setup": "preparing",
     }
-    app = create_app(worker, shutdown_event, transport_state)
+    app = create_app(worker, shutdown_event, transport_state, sites)
     listeners = []
     http_listener = LoopbackServer(app, HTTP_HOST, HTTP_PORT, label="HTTP")
     http_listener.start()
