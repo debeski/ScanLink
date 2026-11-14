@@ -10,6 +10,8 @@ This file owns the release history for `ScanLink`.
 - **Server-Side Origin Allow-List**: Browser-endpoint requests, including preflights, from an `Origin` outside a configured `cors_origins` list are refused with `403 origin_not_allowed` before any work, instead of only omitting CORS headers.
 - **Request Body Limit**: `MAX_CONTENT_LENGTH` is 64 KB, answered as `413 payload_too_large`; a 64 MB `metadata` body was previously accepted, kept with the job for its 15-minute TTL and returned by every status poll. HTTP errors (`404`, `405`, `413`, `500`) now use the JSON error shape with CORS headers.
 - **Private Network Access Preflight**: Allowed-origin preflights carrying `Access-Control-Request-Private-Network: true` receive `Access-Control-Allow-Private-Network: true`.
+- **Non-Blocking TLS Accept**: `LoopbackServer` accepts HTTPS connections without handshaking and `LoopbackRequestHandler` completes the handshake in the connection's own thread; one TCP client that never sent a TLS hello previously stalled every HTTPS request indefinitely.
+- **Connection Timeout**: `LoopbackRequestHandler` sets a 30-second socket timeout (`REQUEST_TIMEOUT_SECONDS`), so half-sent or idle connections no longer hold a server thread forever.
 
 ## v0.8.0b2
 

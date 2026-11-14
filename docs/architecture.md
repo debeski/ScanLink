@@ -158,6 +158,13 @@ HTTPS:
 127.0.0.1:5443
 ```
 
+Each listener is a threaded werkzeug server that serves one connection per
+thread. Its `LoopbackRequestHandler` applies a 30-second socket timeout
+(`REQUEST_TIMEOUT_SECONDS` in `server.py`) to every connection, and the HTTPS
+listener performs the TLS handshake in that connection's thread rather than in
+the accept loop, so an idle or slow client only holds its own thread until the
+timeout and never blocks other clients.
+
 On normal startup the server thread starts HTTP first, then prepares a trusted
 HTTPS identity automatically. A one-year self-signed **server** certificate
 (`BasicConstraints CA=False`, serverAuth EKU, no certificate-signing usage)

@@ -7,7 +7,7 @@ from urllib.parse import urlparse, urlsplit
 
 from flask import Flask, Response, jsonify, request, send_file
 from werkzeug.exceptions import HTTPException
-from werkzeug.serving import make_server
+from werkzeug.serving import WSGIRequestHandler, make_server
 
 from utils import (
     APP_ARCH,
@@ -29,6 +29,8 @@ logger = get_logger()
 LOOPBACK_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
 # Scan requests carry a few identifiers; larger bodies would be kept with the job.
 MAX_REQUEST_BYTES = 64 * 1024
+# Per-connection socket timeout, including the TLS handshake.
+REQUEST_TIMEOUT_SECONDS = 30
 
 
 def is_loopback_host(host):
@@ -303,6 +305,23 @@ def emit_scan_status(job_id, status, **kwargs):
     return None
 
 
+class LoopbackRequestHandler(WSGIRequestHandler):
+    def setup(self):
+        self.timeout = REQUEST_TIMEOUT_SECONDS
+        super().setup()
+
+    def handle(self):
+        # The listener accepts without handshaking, so a client that never sends
+        # a TLS hello only holds its own thread, and only until the timeout.
+        if isinstance(self.connection, ssl.SSLSocket):
+            try:
+                self.connection.do_handshake()
+            except OSError as exc:
+                logger.debug("TLS handshake from %s failed: %s", self.client_address, exc)
+                return
+        super().handle()
+
+
 class LoopbackServer(threading.Thread):
     def __init__(self, app, host, port, ssl_context=None, label="HTTP"):
         super().__init__(daemon=True)
@@ -327,8 +346,11 @@ class LoopbackServer(threading.Thread):
                 self.port,
                 self.app,
                 threaded=True,
+                request_handler=LoopbackRequestHandler,
                 ssl_context=self.ssl_context,
             )
+            if self.ssl_context is not None:
+                self.httpd.socket.do_handshake_on_connect = False
             logger.info("%s listener ready on %s:%s", self.label, self.host, self.port)
         except Exception as exc:
             self.error = exc
