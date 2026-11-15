@@ -2,9 +2,9 @@
 
 This file owns the release history for `ScanLink`.
 
-## Unreleased
+## v0.8.0b3
 
-- **No Website Can Scan Until Allowed (security)**: `cors_origins` defaults to `[]` and wildcards are ignored, so a saved `["*"]` no longer lets every website the operator opens start a scan and download it (silently once a default scanner is saved). New `POST /link` (`sites.SiteRegistry`): a website asks to link, naming the sites its administrator allows; an unlinked one opens an approval window in ScanLink (`gui.dialogs.confirm_site_link`) naming the requesting origin as the browser sent it, waits up to 120 s, one window at a time, and a declined site cannot ask again for 10 minutes. A linked site replaces its list without asking. Links persist in `config.json` `linked_sites`; the tray menu's **Linked Websites** lists and unlinks them. `GET /health` reports `link` for the requesting site. The bundled `scanlink.js` adds `link(sites)` and reports `origin_not_allowed` from `checkHealth()`. Upgrading operators approve each website once.
+- **No Website Can Scan Until Allowed (security)**: `cors_origins` defaults to `[]` and ignores wildcards, so a saved `["*"]` no longer lets any website scan silently. A website asks with `POST /link`, and the operator allows it once in ScanLink's window, which names it; a linked DjangoLux site also allows its administrator's sites. Needs DjangoLux 1.16.0b3 or later.
 - **Loopback Host Check**: `server.create_app()` refuses every request whose `Host` header is not `localhost`, `127.0.0.1` or `[::1]` with `403 invalid_host`, so a DNS-rebound page cannot reach the API as a same-origin client.
 - **Local-Only Control Endpoints**: `POST /shutdown` and `POST /internal/protocol/scan` refuse any request carrying `Origin` or `Sec-Fetch-Site` with `403 local_only`, so a cross-site form post can no longer shut ScanLink down; the protocol forwarder and local scripts send neither header.
 - **Scan Ownership By Origin**: `ScanWorker.submit_job()` records the requesting `Origin`; `GET /scan/<job_id>` and `/result` answer `404 job_not_found` to any other origin, and `409 busy` includes `active_job_id` only for the job's own origin, so a website can no longer learn, follow and download another website's scan.
