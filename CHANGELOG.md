@@ -2,6 +2,10 @@
 
 This file owns the release history for `ScanLink`.
 
+## v0.8.0
+
+- **Stable 0.8.0 For DjangoLux 1.16 (security)**: Promote the published and accepted 0.8.0b3, which includes 0.8.0b1 and b2. No website can scan until the operator allows it once (`POST /link`; `cors_origins` ignores wildcards); the API answers only loopback hosts, refuses cross-site control requests, limits request bodies and keeps each scan to the origin that started it. Scans survive slow scanners and worker failures (deadline grace, atomic PDF completion, single-use results). Needs DjangoLux 1.16.0 or later. No changes from the beta.
+
 ## v0.8.0b3
 
 - **No Website Can Scan Until Allowed (security)**: `cors_origins` defaults to `[]` and ignores wildcards, so a saved `["*"]` no longer lets any website scan silently. A website asks with `POST /link`, and the operator allows it once in ScanLink's window, which names it; a linked DjangoLux site also allows its administrator's sites. Needs DjangoLux 1.16.0b3 or later.
