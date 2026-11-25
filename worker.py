@@ -9,7 +9,6 @@ import tempfile
 import threading
 import time
 import uuid
-from urllib.parse import urlparse
 
 try:
     import requests
@@ -27,6 +26,8 @@ TERMINAL_STATUSES = {"completed", "failed", "cancelled", "timed_out"}
 ANY_ORIGIN = object()
 # Covers child startup and a graceful TWAIN close after the child's own deadline.
 SCAN_TIMEOUT_GRACE_SECONDS = 15
+# (connect, read) for posting a finished scan to its callback URL.
+CALLBACK_TIMEOUT_SECONDS = (5, 30)
 
 # Optional compatibility hook for future push-based status updates.
 _status_callback = None
@@ -51,6 +52,11 @@ class BusyError(Exception):
         self.active_job_id = active_job_id
 
 
+class CallbackNotAllowedError(Exception):
+    def __init__(self):
+        super().__init__("callback_url must point to a website linked to ScanLink.")
+
+
 class GuiTaskTimeoutError(Exception):
     pass
 
@@ -63,10 +69,15 @@ class ScanProcessTimeoutError(Exception):
 
 
 class ScanWorker(threading.Thread):
-    def __init__(self, gui_task_queue):
+    def __init__(self, gui_task_queue, callback_guard=None):
         super().__init__(daemon=True)
         self.scan_queue = queue.Queue()
         self.gui_task_queue = gui_task_queue
+        # ``callback_guard(url, requester_origin)`` decides where finished scans
+        # may be posted (``SiteRegistry.allows_callback``); without one, every
+        # callback is refused.
+        self.callback_guard = callback_guard
+        self.callback_thread = None
         self.jobs = {}
         self.jobs_lock = threading.Lock()
         self.scanner_manager = ScannerManager()
@@ -86,6 +97,9 @@ class ScanWorker(threading.Thread):
     def submit_job(
         self, doc_id=None, callback_url=None, metadata=None, source="api", origin=None
     ):
+        if callback_url and not self._callback_allowed(callback_url, origin):
+            raise CallbackNotAllowedError()
+
         with self.jobs_lock:
             self._cleanup_expired_jobs_locked()
             active_job_id = self._find_active_job_id_locked()
@@ -105,6 +119,8 @@ class ScanWorker(threading.Thread):
                 "completed_at": None,
                 "doc_id": doc_id,
                 "callback_url": callback_url,
+                "callback_state": "waiting" if callback_url else None,
+                "callback_detail": None,
                 "metadata": metadata or {},
                 "page_count": 0,
                 "result_bytes": None,
@@ -207,7 +223,7 @@ class ScanWorker(threading.Thread):
             )
             logger.info("Job %s completed with %s pages", job_id, job_snapshot.get("page_count", 0))
             emit_status(job_id, "completed", page_count=job_snapshot.get("page_count", 0))
-            self._send_callback(job_snapshot, pdf_bytes)
+            self._start_callback(job_id, pdf_bytes)
         except GuiTaskTimeoutError:
             self._fail_job(
                 job_id,
@@ -402,47 +418,91 @@ class ScanWorker(threading.Thread):
             logger.warning("Stopping active scan subprocess during worker shutdown")
             self._terminate_scan_process(process)
 
+    def _callback_allowed(self, callback_url, origin):
+        guard = self.callback_guard
+        if guard is None:
+            return False
+        try:
+            return bool(guard(callback_url, origin))
+        except Exception:
+            logger.exception("Could not check the callback destination %r", callback_url)
+            return False
+
+    def _start_callback(self, job_id, pdf_bytes):
+        """Post a finished scan to its callback without holding up the next scan."""
+        with self.jobs_lock:
+            job = self.jobs.get(job_id)
+            if not job or not job.get("callback_url"):
+                return
+            delivery = {
+                key: job.get(key)
+                for key in ("job_id", "doc_id", "page_count", "callback_url", "origin")
+            }
+            job["callback_state"] = "sending"
+        thread = threading.Thread(
+            target=self._send_callback,
+            args=(delivery, pdf_bytes),
+            daemon=True,
+            name=f"ScanLinkCallback-{job_id[:8]}",
+        )
+        self.callback_thread = thread
+        thread.start()
+
     def _send_callback(self, job, pdf_bytes):
         callback_url = job.get("callback_url")
         if not callback_url:
             return
+        job_id = job["job_id"]
+        # The website may have been unlinked while the scanner ran.
+        if not self._callback_allowed(callback_url, job.get("origin")):
+            logger.warning(
+                "Not sending job %s to %s: that website is not linked to ScanLink", job_id, callback_url
+            )
+            self._record_callback(job_id, "refused", reason="not_linked")
+            return
         if requests is None:
-            logger.warning("requests is not installed; skipping callback delivery for job %s", job["job_id"])
+            logger.warning("requests is not installed; cannot send job %s to its callback", job_id)
+            self._record_callback(job_id, "failed", reason="unavailable")
             return
 
+        files = {"pdf": (f"scan_{job_id}.pdf", pdf_bytes, "application/pdf")}
+        data = {
+            "job_id": job_id,
+            "doc_id": job.get("doc_id"),
+            "page_count": job.get("page_count", 0),
+            "status": "completed",
+        }
         try:
-            parsed = urlparse(callback_url)
-        except ValueError:
-            parsed = None
-        if not parsed or parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            logger.warning("Skipping callback for job %s because callback_url is not absolute: %s", job["job_id"], callback_url)
-            return
-
-        try:
-            files = {
-                "pdf": (
-                    f"scan_{job['job_id']}.pdf",
-                    pdf_bytes,
-                    "application/pdf",
-                )
-            }
-            data = {
-                "job_id": job["job_id"],
-                "doc_id": job.get("doc_id"),
-                "page_count": job.get("page_count", 0),
-                "status": "completed",
-            }
-            response = requests.post(callback_url, files=files, data=data, timeout=30)
-            if response.ok:
-                logger.info("Callback sent to %s for job %s", callback_url, job["job_id"])
-            else:
-                logger.warning(
-                    "Callback for job %s failed with status %s",
-                    job["job_id"],
-                    response.status_code,
-                )
+            # No redirects: a linked website must not hand the document on elsewhere.
+            response = requests.post(
+                callback_url,
+                files=files,
+                data=data,
+                timeout=CALLBACK_TIMEOUT_SECONDS,
+                allow_redirects=False,
+            )
         except Exception as exc:
-            logger.error(f"Callback error for job {job['job_id']}: {exc}")
+            logger.error("Could not send job %s to %s: %s", job_id, callback_url, exc)
+            self._record_callback(job_id, "failed", reason="unreachable")
+            return
+
+        if 200 <= response.status_code < 300:
+            logger.info("Sent job %s to %s", job_id, callback_url)
+            self._record_callback(job_id, "delivered", status_code=response.status_code)
+        else:
+            logger.warning(
+                "Callback for job %s answered %s; the result stays available to poll",
+                job_id,
+                response.status_code,
+            )
+            self._record_callback(job_id, "failed", status_code=response.status_code)
+
+    def _record_callback(self, job_id, state, **detail):
+        with self.jobs_lock:
+            job = self.jobs.get(job_id)
+            if job:
+                job["callback_state"] = state
+                job["callback_detail"] = detail or None
 
     def _visible_job_locked(self, job_id, origin):
         job = self.jobs.get(job_id)
@@ -486,6 +546,11 @@ class ScanWorker(threading.Thread):
             response["metadata"] = job["metadata"]
         if job.get("error"):
             response["error"] = dict(job["error"])
+        callback_state = job.get("callback_state")
+        if callback_state:
+            if callback_state == "waiting" and job["status"] in TERMINAL_STATUSES:
+                callback_state = "sending" if job["status"] == "completed" else "not_sent"
+            response["callback"] = {"state": callback_state, **(job.get("callback_detail") or {})}
         return response
 
     def _cleanup_expired_jobs(self):

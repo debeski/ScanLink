@@ -80,6 +80,12 @@ Accepted aliases:
 - `doc_id` or `docId`
 - `callback_url` or `callback`
 
+`callback_url` must point at a website the operator allowed: one linked with `POST /link`, or one listed in `cors_origins`. Its scheme, host and port must match that website exactly.
+- A request from a browser `Origin` may only name its own website or the sites linked together with it.
+- A local tool with no `Origin` may name any allowed website.
+
+Anything else is refused before a scan starts. The [Developer Guide](developer-guide.md#callback-url) describes how the scan is delivered.
+
 Response `202`:
 
 ```json
@@ -96,6 +102,7 @@ Errors:
 | 400 | `invalid_json` | Body could not be parsed as JSON. |
 | 400 | `invalid_payload` | JSON root was not an object. |
 | 400 | `invalid_callback` | Callback URL was not a string or could not be parsed. |
+| 400 | `callback_not_allowed` | Callback URL does not point at a website this request may name (see above). |
 | 400 | `invalid_metadata` | `metadata` was provided but is not an object. |
 | 409 | `busy` | Another scan job is queued or running. |
 | 413 | `payload_too_large` | Request body exceeded 64 KB. |
@@ -139,6 +146,21 @@ Response:
 }
 ```
 
+A job started with a callback URL also reports how the callback went, without the URL itself:
+
+```json
+"callback": {"state": "delivered", "status_code": 201}
+```
+
+| `state` | Meaning |
+| --- | --- |
+| `waiting` | The scan has not finished. |
+| `sending` | The PDF is being posted. |
+| `delivered` | The callback answered with a 2xx `status_code`. |
+| `failed` | The callback answered with another `status_code` (redirects are not followed), or `reason` is `unreachable` or `unavailable`. |
+| `refused` | `reason: not_linked`: the website was unlinked while the scanner ran, so nothing was sent. |
+| `not_sent` | The scan ended without a PDF. |
+
 Terminal failure response:
 
 ```json
@@ -179,7 +201,7 @@ Errors:
 
 ## POST /internal/protocol/scan
 
-Requires an `application/json` object and applies the same metadata/callback validation as `/scan`; malformed requests never queue a scan. The optional `action` must be `scan`.
+Requires an `application/json` object and applies the same metadata/callback validation as `/scan`; malformed requests never queue a scan. A callback must point at an allowed website, as for a local tool on `/scan`; otherwise the request fails with `400 callback_not_allowed`. The optional `action` must be `scan`.
 
 Internal endpoint used by `scanlink://` launches to forward commands into an already-running ScanLink instance. Application integrations should normally use `POST /scan`.
 
@@ -243,6 +265,8 @@ any work is done; only `POST /link` is open to every website. Preflights carryin
 Access requires for a public website calling the loopback helper.
 
 Job ownership keeps each allowed website away from scans started by others.
+The same list decides where a finished scan may be posted: a `callback_url`
+must point at an allowed website (see [`POST /scan`](#post-scan)).
 
 ## POST /link
 

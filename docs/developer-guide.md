@@ -149,17 +149,34 @@ Example with callback:
 
 If ScanLink is already running, a protocol launch forwards the command to the existing tray instance through the internal local endpoint.
 
+Any web page can open a `scanlink://` link, so a link whose callback is not an allowed website is refused and never scans (see [Callback URL](#callback-url)).
+
 ## Callback URL
 
 When `callback_url` is provided, ScanLink posts the completed PDF to that URL after a successful scan.
 
-The callback request is `multipart/form-data` with:
+**Where a callback may go.** Only to a website the operator allowed, by linking it (`POST /link`) or listing it in `cors_origins`. The URL's scheme, host and port must match that website exactly. A URL with credentials (`https://site@other.example`) never matches.
+- **Browser request:** a scan started from a page (`POST /scan` with an `Origin`) may only name its own website or the sites linked together with it.
+- **Local tool or `scanlink://` link:** may name any allowed website.
+- **Refused before scanning:** anything else gets `400 callback_not_allowed`, and the scanner never starts.
+- **Re-checked before sending:** if the website was unlinked while the scanner ran, nothing is sent.
+
+**The request.** A `multipart/form-data` POST with:
 
 - `pdf`: scanned PDF file
 - `job_id`: ScanLink job ID
 - `doc_id`: document ID from the original request, if provided
 - `page_count`: number of scanned pages
 - `status`: `completed`
+
+**How it is sent.**
+- On its own thread, so a slow server never holds up the next scan.
+- Connect timeout 5 s, read timeout 30 s.
+- Redirects are not followed, so a website cannot pass the document on to another host.
+- Only a 2xx answer counts as delivered.
+- The PDF stays available to `GET /scan/<job_id>/result` either way. The job's `callback` field reports the outcome (see the [API Reference](api.md#get-scanjob_id)).
+
+**The receiving endpoint.** The request carries no session cookie or CSRF token. Accept it only for a `job_id` or `doc_id` your application issued, and exempt that one endpoint from CSRF.
 
 Use callbacks when your backend can receive files directly and you do not want the browser to upload the PDF after polling.
 
