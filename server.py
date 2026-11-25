@@ -22,7 +22,7 @@ from utils import (
     normalize_origin,
 )
 from sites import LinkError, SiteRegistry
-from worker import BusyError
+from worker import BusyError, CallbackNotAllowedError
 
 logger = get_logger()
 
@@ -219,6 +219,8 @@ def create_app(worker, shutdown_event, transport_state, sites=None):
                 source="api",
                 origin=request.headers.get("Origin"),
             )
+        except CallbackNotAllowedError as exc:
+            return error_response(400, "callback_not_allowed", str(exc))
         except BusyError as exc:
             extra = {"active_job_id": exc.active_job_id} if exc.active_job_id else {}
             return error_response(
@@ -301,10 +303,12 @@ def create_app(worker, shutdown_event, transport_state, sites=None):
         try:
             job = worker.submit_job(
                 doc_id=data.get("doc_id"),
-                callback_url=data.get("callback_url"),
+                callback_url=data.get("callback_url") or data.get("callback"),
                 metadata=data.get("metadata"),
                 source="protocol",
             )
+        except CallbackNotAllowedError as exc:
+            return error_response(400, "callback_not_allowed", str(exc))
         except BusyError as exc:
             return (
                 jsonify(

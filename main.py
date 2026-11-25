@@ -18,7 +18,7 @@ from server import run_server
 from sites import LINK_PROMPT_SECONDS, SiteRegistry
 from tray import TrayApp
 from utils import APP_VERSION, ensure_ssl_certificates, get_logger, load_config, setup_logging
-from worker import ScanWorker, set_status_callback
+from worker import CallbackNotAllowedError, ScanWorker, set_status_callback
 
 
 def main():
@@ -98,6 +98,7 @@ def main():
 
     config = load_config()
     sites = SiteRegistry(config["cors_origins"], config["linked_sites"], confirm=confirm_link)
+    worker.callback_guard = sites.allows_callback
 
     tray = TrayApp(worker, shutdown_event, https_retry_event, sites=sites)
 
@@ -128,6 +129,11 @@ def main():
                     source="protocol",
                 )
                 logger.info("Protocol-triggered scan queued locally")
+            except CallbackNotAllowedError:
+                logger.warning(
+                    "Refused a scanlink:// scan whose callback %r is not a website linked to ScanLink",
+                    protocol_command.get("callback_url"),
+                )
             except Exception as exc:
                 logger.error(f"Failed to queue protocol-triggered scan: {exc}")
 

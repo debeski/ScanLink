@@ -161,6 +161,23 @@ def normalize_origin(value):
     default_port = 443 if parts.scheme == "https" else 80
     return f"{parts.scheme}://{host}" + (f":{port}" if port and port != default_port else "")
 
+def url_origin(url):
+    """The website origin an absolute http(s) URL points at; None for anything else.
+
+    URLs carrying credentials are refused, so ``https://site@other.example`` can
+    never pass for ``site``.
+    """
+    if not isinstance(url, str) or not url or len(url) > 2048:
+        return None
+    try:
+        parts = urlsplit(url.strip())
+        parts.port  # raises ValueError for a malformed port
+    except ValueError:
+        return None
+    if parts.username is not None or parts.password is not None or not parts.netloc:
+        return None
+    return normalize_origin(f"{parts.scheme}://{parts.netloc}")
+
 def _origin_list(values):
     origins = []
     for value in values if isinstance(values, list) else []:
