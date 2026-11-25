@@ -2,7 +2,7 @@
 
 This file owns the release history for `ScanLink`.
 
-## Unreleased
+## v0.8.1b1
 
 - **Callbacks Delivered, To Linked Websites Only (security)**: a finished scan was never posted to its `callback_url`. Since 2026-04-28, `_process_job` passed `_send_callback` the public job snapshot, which carries no URL. `ScanWorker._start_callback` now posts the stored PDF on its own thread (connect 5 s, read 30 s, redirects not followed, only 2xx counts). `SiteRegistry.allows_callback` limits the destination to an allowed website: a browser request may name only its own website or the sites linked with it, and a local tool or `scanlink://` link may name any linked or listed website. The check runs at submission (`400 callback_not_allowed` on `/scan` and `/internal/protocol/scan`; a refused `scanlink://` launch never scans) and again before sending. Each job reports `callback.state` (`waiting`, `sending`, `delivered`, `failed`, `refused`, `not_sent`), and the PDF stays available to poll either way. Without the rule, delivery would have let any page post a scanned document to a host of its choosing through a `scanlink://` link.
 
