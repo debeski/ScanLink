@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from utils import get_logger, load_config, normalize_origin, save_config
+from utils import get_logger, load_config, normalize_origin, save_config, url_origin
 
 logger = get_logger()
 
@@ -59,11 +59,37 @@ class SiteRegistry:
 
     def is_allowed(self, origin):
         with self._lock:
-            return (
-                origin in self._listed
-                or origin in self._links
-                or any(origin in link["sites"] for link in self._links.values())
+            return self._allowed_locked(origin)
+
+    def allows_callback(self, callback_url, requester=None):
+        """Whether ScanLink may post a finished scan to ``callback_url``.
+
+        The URL must point at a website the operator allowed. A browser request
+        (``requester`` is its Origin) may only name its own website or a site
+        linked together with it; a local tool or a ``scanlink://`` link, which
+        has no Origin, may name any allowed website.
+        """
+        target = url_origin(callback_url)
+        if target is None:
+            return False
+        with self._lock:
+            if not self._allowed_locked(target):
+                return False
+            if requester is None:
+                return True
+            if not self._allowed_locked(requester):
+                return False
+            return target == requester or any(
+                requester in link["sites"] and target in link["sites"]
+                for link in self._links.values()
             )
+
+    def _allowed_locked(self, origin):
+        return (
+            origin in self._listed
+            or origin in self._links
+            or any(origin in link["sites"] for link in self._links.values())
+        )
 
     def link_for(self, origin):
         with self._lock:

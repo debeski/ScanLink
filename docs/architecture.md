@@ -236,8 +236,14 @@ the first enabled deadline terminates the child, even if it keeps reporting
 progress. The scan deadline includes a 15-second grace (`SCAN_TIMEOUT_GRACE_SECONDS`
 in `worker.py`) covering child startup, so a child that honours its own
 `scan_timeout_seconds` closes the TWAIN source and reports its error before the
-parent force-terminates it. Unparseable callback URLs are skipped without
-affecting the stored PDF. Idle timeout remains an independent progress guard. Downloading frees
+parent force-terminates it.
+
+Once the PDF is stored, the parent posts it to the job's callback URL on a
+separate thread (`ScanWorker._start_callback`).
+- **Destination check:** `SiteRegistry.allows_callback` decides where it may go. `main.py` gives it to the worker as `callback_guard`, and without one every callback is refused. It runs when the job is submitted and again before sending.
+- **Failures:** a refused or failed callback never affects the stored PDF.
+
+Idle timeout remains an independent progress guard. Downloading frees
 the PDF immediately and retains consumed-job metadata until the normal job TTL,
 so repeated or racing downloads report `410` while that metadata exists.
 

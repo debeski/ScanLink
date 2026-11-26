@@ -2,6 +2,10 @@
 
 This file owns the release history for `ScanLink`.
 
+## v0.8.1b1
+
+- **Callbacks Delivered, To Linked Websites Only (security)**: a finished scan was never posted to its `callback_url`. Since 2026-04-28, `_process_job` passed `_send_callback` the public job snapshot, which carries no URL. `ScanWorker._start_callback` now posts the stored PDF on its own thread (connect 5 s, read 30 s, redirects not followed, only 2xx counts). `SiteRegistry.allows_callback` limits the destination to an allowed website: a browser request may name only its own website or the sites linked with it, and a local tool or `scanlink://` link may name any linked or listed website. The check runs at submission (`400 callback_not_allowed` on `/scan` and `/internal/protocol/scan`; a refused `scanlink://` launch never scans) and again before sending. Each job reports `callback.state` (`waiting`, `sending`, `delivered`, `failed`, `refused`, `not_sent`), and the PDF stays available to poll either way. Without the rule, delivery would have let any page post a scanned document to a host of its choosing through a `scanlink://` link.
+
 ## v0.8.0
 
 - **Stable 0.8.0 For DjangoLux 1.16 (security)**: Promote the published and accepted 0.8.0b3, which includes 0.8.0b1 and b2. No website can scan until the operator allows it once (`POST /link`; `cors_origins` ignores wildcards); the API answers only loopback hosts, refuses cross-site control requests, limits request bodies and keeps each scan to the origin that started it. Scans survive slow scanners and worker failures (deadline grace, atomic PDF completion, single-use results). Needs DjangoLux 1.16.0 or later. No changes from the beta.
