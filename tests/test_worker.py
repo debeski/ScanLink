@@ -71,16 +71,19 @@ class WorkerTests(unittest.TestCase):
 
         _job, result_bytes = worker.consume_result("job-1")
         self.assertEqual(result_bytes, b"pdf")
+        _job, retried = worker.consume_result("job-1")
+        self.assertEqual(retried, b"pdf")
         self.assertIsNone(worker.jobs["job-1"]["result_bytes"])
+        self.assertEqual(worker.consume_result("job-1")[1], None)
         self.assertEqual(worker.get_job("job-1")["status"], "completed")
         worker.job_ttl_seconds = 0
         self.assertIsNone(worker.get_job("job-1"))
 
     def test_unparseable_callback_is_skipped(self):
         worker = ScanWorker(queue.Queue())
-        with patch("worker.requests") as requests:
+        with patch("worker.post_scan") as post:
             worker._send_callback({"job_id": "job-1", "callback_url": "http://["}, b"pdf")
-        requests.post.assert_not_called()
+        post.assert_not_called()
 
 
 if __name__ == "__main__":

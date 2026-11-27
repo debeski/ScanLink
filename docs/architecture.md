@@ -9,13 +9,15 @@ ScanLink is a Windows tray application that exposes a local browser API and isol
 | `main.py` | Main entry point. Handles CLI modes, initializes Tk, starts the worker, server, and tray threads. |
 | `server.py` | Flask app for local REST endpoints. Starts HTTP and optional HTTPS loopback listeners. |
 | `worker.py` | Owns scan job state, enforces one active job, launches scan subprocesses, stores results, and sends callbacks. |
+| `callback_transport.py` | Checks callback destinations (public `https` only) and posts a finished scan to the address it checked, with an overall deadline. |
+| `sites.py` | Websites allowed to scan: `cors_origins`, linked websites, their lists, and the rationing of approval windows. |
 | `scan_runtime.py` | Runs inside the child scan process. Reads job request files, calls the scanner, writes progress state and result PDF. |
 | `scanner.py` | TWAIN scanner manager. Lists sources, opens the selected scanner, acquires pages, and generates PDFs. |
 | `tray.py` | System tray icon and menu actions. Controls source, side, color mode, resolution, diagnostics, startup, scanner UI, paper protection, and quit. |
 | `protocol_handler.py` | Parses `scanlink://` URLs and forwards protocol launches to an existing local instance. |
 | `certificates.py` | Per-user localhost identity, Windows trust, DPAPI key-password protection, and renewal. |
 | `utils.py` | Shared logging, config, version, SSL certificate, startup, and resource helpers. |
-| `gui/dialogs.py` | Tk dialogs for scanner selection and diagnostics output. |
+| `gui/dialogs.py` | Tk dialogs for scanner selection, diagnostics output and website approval. |
 
 ## Non-Runtime Project Files
 
@@ -66,6 +68,19 @@ worker.py
 ```
 
 This subprocess boundary protects the tray/API process from scanner driver crashes, stuck TWAIN calls, and long-running acquisition operations.
+
+The child does not outlive ScanLink. On Windows, `ScanWorker` places every child
+in a job object that ends it when ScanLink's own process ends (kill-on-close),
+which also releases the TWAIN source. `request.json` carries `parent_pid`, and
+the child watches that process: when it disappears, the child removes its job
+directory and exits. When the worker starts, and every 10 minutes while it is
+idle, it removes `scanlink-job-*` and `scanlink-pages-*` folders older than 30
+seconds from the temp directory, which an earlier ScanLink killed mid-scan left
+with the scanned pages inside.
+
+The child writes `page_count` into its final `completed` state, and the parent
+applies that last state after the child exits, so the reported page count does
+not depend on which progress states its 250 ms polls happened to see.
 
 `scan_runtime.run_scan_job()` only runs in a `scanlink-job-*` directory directly
 inside the user's temp directory, the only kind `ScanWorker` creates. Any other
@@ -171,11 +186,17 @@ HTTPS:
 ```
 
 Each listener is a threaded werkzeug server that serves one connection per
-thread. Its `LoopbackRequestHandler` applies a 30-second socket timeout
-(`REQUEST_TIMEOUT_SECONDS` in `server.py`) to every connection, and the HTTPS
-listener performs the TLS handshake in that connection's thread rather than in
-the accept loop, so an idle or slow client only holds its own thread until the
-timeout and never blocks other clients.
+thread, at most 64 at once (`MAX_CONCURRENT_CONNECTIONS` in `server.py`); a
+connection beyond that is closed when it is accepted. Its
+`LoopbackRequestHandler` applies a 30-second socket timeout
+(`REQUEST_TIMEOUT_SECONDS`) to every connection and a 30-second deadline
+(`REQUEST_DEADLINE_SECONDS`) to each request: its line, headers and body must
+all arrive within 30 seconds, however slowly the bytes trickle in, and the TLS
+handshake must finish within the same time. The HTTPS listener performs the
+handshake in that connection's thread rather than in the accept loop, so an idle
+or slow client only holds its own thread until the deadline and never blocks
+other clients. Time a request spends being answered, such as `POST /link`
+waiting for the operator, does not count.
 
 On normal startup the server thread starts HTTP first, then prepares a trusted
 HTTPS identity automatically. A one-year self-signed **server** certificate
@@ -238,14 +259,22 @@ in `worker.py`) covering child startup, so a child that honours its own
 `scan_timeout_seconds` closes the TWAIN source and reports its error before the
 parent force-terminates it.
 
+A deadline the child reaches while pages are still arriving is reported as
+`acquire_timeout` with status `timed_out`, like any other scan deadline.
+
 Once the PDF is stored, the parent posts it to the job's callback URL on a
-separate thread (`ScanWorker._start_callback`).
-- **Destination check:** `SiteRegistry.allows_callback` decides where it may go. `main.py` gives it to the worker as `callback_guard`, and without one every callback is refused. It runs when the job is submitted and again before sending.
+separate thread (`ScanWorker._start_callback`), at most two at a time
+(`MAX_CALLBACKS_IN_FLIGHT`).
+- **Destination check:** `SiteRegistry.allows_callback` decides where it may go: an `https` URL on an allowed website whose host is not `localhost` or a non-public address literal (`callback_transport.check_callback_url`). `main.py` gives it to the worker as `callback_guard`, and without one every callback is refused. It runs when the job is submitted and again before sending.
+- **Connection check:** `callback_transport.post_scan` resolves the host itself, refuses it if any address is not public or belongs to this computer, connects to the checked address with TLS verified for the host name, and checks the connected peer again. No proxy is used, redirects are not followed, the answer's body is never read, and a watchdog closes the connection 120 seconds after the delivery started.
 - **Failures:** a refused or failed callback never affects the stored PDF.
 
-Idle timeout remains an independent progress guard. Downloading frees
-the PDF immediately and retains consumed-job metadata until the normal job TTL,
-so repeated or racing downloads report `410` while that metadata exists.
+Idle timeout remains an independent progress guard. A PDF can be downloaded
+twice, the second time within `RESULT_RETRY_GRACE_SECONDS` (30) of the first;
+then its bytes are freed and the job's metadata stays until the job TTL, so
+later downloads report `410` while that metadata exists. `HEAD` does not count
+as a download. Job and result lifetimes run on `time.monotonic()`; the
+wall-clock stamps in job snapshots are for display only.
 
 ## 0.8.0b1 release acceptance
 

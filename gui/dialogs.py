@@ -126,36 +126,87 @@ def show_text_dialog(title, body, width=760, height=520):
     dlg.wait_window()
 
 
-def confirm_site_link(origin, other_sites, timeout_seconds):
-    """Ask whether ``origin`` may use the scanner: True, False, or None if unanswered."""
+# The approval window lists every site in full: a site cut off at the edge, or
+# scrolled out of view, would be approved without the operator seeing it.
+SITE_LIST_MAX_ROWS = 20
+SITE_LIST_MIN_WIDTH = 40
+SITE_LIST_MAX_WIDTH = 90
+
+
+def site_list_size(sites):
+    """``(rows, characters)`` for a listing that shows every site without scrolling when it fits."""
+    rows = max(1, min(len(sites), SITE_LIST_MAX_ROWS))
+    width = max([SITE_LIST_MIN_WIDTH, *(len(site) + 2 for site in sites)])
+    return rows, min(width, SITE_LIST_MAX_WIDTH)
+
+
+def _site_listing(parent, sites):
+    rows, width = site_list_size(sites)
+    holder = tk.Frame(parent)
+    listing = tk.Listbox(holder, height=rows, width=width, activestyle=tk.NONE)
+    for site in sites:
+        listing.insert(tk.END, site)
+    listing.grid(row=0, column=0, sticky="ew")
+    if max(len(site) for site in sites) + 2 > width:
+        scroll_x = tk.Scrollbar(holder, orient=tk.HORIZONTAL, command=listing.xview)
+        listing.configure(xscrollcommand=scroll_x.set)
+        scroll_x.grid(row=1, column=0, sticky="ew")
+    if len(sites) > rows:
+        scroll_y = tk.Scrollbar(holder, orient=tk.VERTICAL, command=listing.yview)
+        listing.configure(yscrollcommand=scroll_y.set)
+        scroll_y.grid(row=0, column=1, sticky="ns")
+    holder.columnconfigure(0, weight=1)
+    holder.pack(anchor=tk.W, fill=tk.X)
+    return listing
+
+
+def confirm_site_link(origin, other_sites, timeout_seconds, added_sites=None, cancel=None):
+    """Ask whether ``origin`` may use the scanner: True, False, or None if unanswered.
+
+    ``added_sites`` names what an already linked website's list gains; ``cancel``
+    (a ``threading.Event``) closes the window unanswered when set.
+    """
     if not _root:
         logging.error("GUI not initialized with root window")
         return None
 
     answer = {"value": None}
     dlg = tk.Toplevel()
-    dlg.title("Allow a website to use ScanLink?")
+    widening = bool(added_sites)
+    dlg.title("Allow more websites to use ScanLink?" if widening else "Allow a website to use ScanLink?")
     dlg.resizable(False, False)
 
     frame = tk.Frame(dlg, padx=16, pady=14)
     frame.pack(fill=tk.BOTH, expand=True)
-    tk.Label(frame, text=origin, font=("TkDefaultFont", 11, "bold"), wraplength=440, justify=tk.LEFT).pack(anchor=tk.W)
-    tk.Label(frame, text="wants to use the scanner on this computer.", wraplength=440, justify=tk.LEFT).pack(anchor=tk.W)
-    if other_sites:
+    tk.Label(frame, text=origin, font=("TkDefaultFont", 11, "bold"), wraplength=560, justify=tk.LEFT).pack(anchor=tk.W)
+    if widening:
         tk.Label(
             frame,
-            text="Its administrator also allows these websites:",
-            wraplength=440,
+            text="is already linked, and now asks to let these websites use the scanner on this computer too:",
+            wraplength=560,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W)
+        _site_listing(frame, list(added_sites))
+        tk.Label(
+            frame,
+            text="If you choose Don't allow, it stays linked with the websites you allowed before.",
+            wraplength=560,
             justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(10, 0))
-        listing = tk.Listbox(frame, height=min(len(other_sites), 6), width=56)
-        for site in other_sites:
-            listing.insert(tk.END, site)
-        listing.pack(anchor=tk.W, fill=tk.X)
+    else:
+        tk.Label(frame, text="wants to use the scanner on this computer.", wraplength=560, justify=tk.LEFT).pack(anchor=tk.W)
+        if other_sites:
+            tk.Label(
+                frame,
+                text=f"Its administrator also allows these {len(other_sites)} websites:",
+                wraplength=560,
+                justify=tk.LEFT,
+            ).pack(anchor=tk.W, pady=(10, 0))
+            _site_listing(frame, list(other_sites))
     tk.Label(
         frame,
-        text="Only allow a website you use for your work. You can unlink it later from the ScanLink tray menu.",
-        wraplength=440,
+        text="Only allow websites you use for your work. You can unlink a website later from the ScanLink tray menu.",
+        wraplength=560,
         justify=tk.LEFT,
     ).pack(anchor=tk.W, pady=(10, 0))
 
@@ -163,6 +214,12 @@ def confirm_site_link(origin, other_sites, timeout_seconds):
         answer["value"] = value
         if dlg.winfo_exists():
             dlg.destroy()
+
+    def watch_cancel():
+        if cancel is not None and cancel.is_set():
+            finish(None)
+        elif dlg.winfo_exists():
+            dlg.after(200, watch_cancel)
 
     buttons = tk.Frame(frame)
     buttons.pack(pady=(14, 0))
@@ -172,6 +229,8 @@ def confirm_site_link(origin, other_sites, timeout_seconds):
     dlg.protocol("WM_DELETE_WINDOW", lambda: finish(False))
     dlg.bind("<Escape>", lambda event: finish(False))
     dlg.after(int(timeout_seconds * 1000), lambda: finish(None))
+    if cancel is not None:
+        dlg.after(200, watch_cancel)
 
     dlg.update_idletasks()
     width, height = dlg.winfo_reqwidth(), dlg.winfo_reqheight()
@@ -180,10 +239,10 @@ def confirm_site_link(origin, other_sites, timeout_seconds):
     dlg.geometry(f"+{x}+{y}")
     dlg.deiconify()
     dlg.wait_visibility()
+    # Shown above other windows, but without taking the keyboard from what the
+    # operator is typing in; "Don't allow" is the default once it is clicked.
     dlg.attributes("-topmost", True)
     dlg.lift()
-    dlg.focus_force()
     deny.focus_set()
-    dlg.grab_set()
     dlg.wait_window()
     return answer["value"]

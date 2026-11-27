@@ -8,15 +8,12 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import uuid
 
-try:
-    import requests
-except ImportError:
-    requests = None
-
+from callback_transport import CallbackFailed, CallbackRefused, post_scan
 from scanner import ScanError, ScannerManager
-from utils import SCAN_JOB_DIRECTORY_PREFIX, get_logger, load_config
+from utils import APP_VERSION, SCAN_JOB_DIRECTORY_PREFIX, get_logger, load_config
 
 logger = get_logger()
 
@@ -26,8 +23,17 @@ TERMINAL_STATUSES = {"completed", "failed", "cancelled", "timed_out"}
 ANY_ORIGIN = object()
 # Covers child startup and a graceful TWAIN close after the child's own deadline.
 SCAN_TIMEOUT_GRACE_SECONDS = 15
-# (connect, read) for posting a finished scan to its callback URL.
-CALLBACK_TIMEOUT_SECONDS = (5, 30)
+# Callbacks being sent at once; a scan finished while both are busy is not sent.
+MAX_CALLBACKS_IN_FLIGHT = 2
+# A downloaded result may be downloaded once more within this many seconds, for
+# a client whose first download was cut off; then it is freed.
+RESULT_RETRY_GRACE_SECONDS = 30
+MAX_RESULT_DOWNLOADS = 2
+MAX_DOC_ID_LENGTH = 200
+# Folders a scan child leaves behind when ScanLink itself was killed.
+STALE_DIRECTORY_PREFIXES = (SCAN_JOB_DIRECTORY_PREFIX, "scanlink-pages-")
+STALE_DIRECTORY_MIN_AGE_SECONDS = 30
+STALE_SWEEP_INTERVAL_SECONDS = 600
 
 # Optional compatibility hook for future push-based status updates.
 _status_callback = None
@@ -54,7 +60,127 @@ class BusyError(Exception):
 
 class CallbackNotAllowedError(Exception):
     def __init__(self):
-        super().__init__("callback_url must point to a website linked to ScanLink.")
+        super().__init__("callback_url must be an https URL on a website linked to ScanLink.")
+
+
+class InvalidDocIdError(ValueError):
+    def __init__(self):
+        super().__init__(
+            f"doc_id must be a whole number or text of at most {MAX_DOC_ID_LENGTH} characters without control characters."
+        )
+
+
+def clean_doc_id(value):
+    """A ``doc_id`` that is safe to store, log and echo as JSON; raises ``InvalidDocIdError``."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise InvalidDocIdError()
+    if isinstance(value, int):
+        if abs(value) >= 2 ** 63:
+            raise InvalidDocIdError()
+        return value
+    if not isinstance(value, str) or len(value) > MAX_DOC_ID_LENGTH:
+        raise InvalidDocIdError()
+    if any(unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp") for ch in value):
+        raise InvalidDocIdError()
+    return value
+
+
+def sweep_stale_directories(temp_dir=None, min_age_seconds=STALE_DIRECTORY_MIN_AGE_SECONDS, now=None):
+    """Remove scan folders a killed ScanLink left in the temp directory; returns their names."""
+    temp_dir = temp_dir or tempfile.gettempdir()
+    now = time.time() if now is None else now
+    removed = []
+    try:
+        names = os.listdir(temp_dir)
+    except OSError:
+        return removed
+    for name in names:
+        if not name.startswith(STALE_DIRECTORY_PREFIXES):
+            continue
+        path = os.path.join(temp_dir, name)
+        try:
+            if not os.path.isdir(path) or os.path.islink(path):
+                continue
+            if now - os.path.getmtime(path) < min_age_seconds:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        if not os.path.exists(path):
+            removed.append(name)
+    if removed:
+        logger.info("Removed %s scan folder(s) left by an earlier ScanLink: %r", len(removed), removed)
+    return removed
+
+
+class _KillOnCloseJob:
+    """A Windows job object that ends every scan child when ScanLink's own process ends."""
+
+    def __init__(self):
+        self._handle = None
+        self._kernel32 = None
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class BasicLimits(ctypes.Structure):
+                _fields_ = [
+                    ("PerProcessUserTimeLimit", ctypes.c_int64),
+                    ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD),
+                ]
+
+            class IoCounters(ctypes.Structure):
+                _fields_ = [(name, ctypes.c_uint64) for name in (
+                    "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                    "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
+                )]
+
+            class ExtendedLimits(ctypes.Structure):
+                _fields_ = [
+                    ("BasicLimitInformation", BasicLimits),
+                    ("IoInfo", IoCounters),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t),
+                ]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+            kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+            kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
+            kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+            handle = kernel32.CreateJobObjectW(None, None)
+            if not handle:
+                return
+            limits = ExtendedLimits()
+            limits.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+                kernel32.CloseHandle(handle)
+                return
+            self._handle, self._kernel32 = handle, kernel32
+        except Exception:
+            logger.warning("Could not create the scan child job object", exc_info=True)
+
+    def assign(self, process):
+        if self._handle is None:
+            return False
+        try:
+            return bool(self._kernel32.AssignProcessToJobObject(self._handle, int(process._handle)))
+        except Exception:
+            logger.warning("Could not tie the scan child to ScanLink's lifetime", exc_info=True)
+            return False
 
 
 class GuiTaskTimeoutError(Exception):
@@ -78,6 +204,9 @@ class ScanWorker(threading.Thread):
         # callback is refused.
         self.callback_guard = callback_guard
         self.callback_thread = None
+        self._callback_slots = threading.BoundedSemaphore(MAX_CALLBACKS_IN_FLIGHT)
+        self._child_job = _KillOnCloseJob()
+        self._next_sweep_at = 0.0
         self.jobs = {}
         self.jobs_lock = threading.Lock()
         self.scanner_manager = ScannerManager()
@@ -97,6 +226,7 @@ class ScanWorker(threading.Thread):
     def submit_job(
         self, doc_id=None, callback_url=None, metadata=None, source="api", origin=None
     ):
+        doc_id = clean_doc_id(doc_id)
         if callback_url and not self._callback_allowed(callback_url, origin):
             raise CallbackNotAllowedError()
 
@@ -131,7 +261,7 @@ class ScanWorker(threading.Thread):
             }
 
         self.scan_queue.put(job_id)
-        logger.info("Job %s queued (source=%s, doc_id=%s)", job_id, source, doc_id)
+        logger.info("Job %s queued (source=%r, doc_id=%r)", job_id, source, doc_id)
         emit_status(job_id, "queued", doc_id=doc_id)
         return self.get_job(job_id)
 
@@ -142,6 +272,12 @@ class ScanWorker(threading.Thread):
             return self._serialize_job(job) if job else None
 
     def consume_result(self, job_id, origin=ANY_ORIGIN):
+        """The job and its PDF, counting a download.
+
+        The PDF can be downloaded twice within ``RESULT_RETRY_GRACE_SECONDS`` of
+        the first download, so a download cut off mid-way can be retried; then
+        its bytes are freed and later downloads get no bytes.
+        """
         with self.jobs_lock:
             self._cleanup_expired_jobs_locked()
             job = self._visible_job_locked(job_id, origin)
@@ -150,11 +286,26 @@ class ScanWorker(threading.Thread):
 
             result_bytes = job.get("result_bytes")
             if result_bytes:
-                job["result_bytes"] = None
-                job["result_retrieved_at"] = time.time()
+                downloads = job.get("result_downloads", 0) + 1
+                job["result_downloads"] = downloads
+                if downloads == 1:
+                    job["result_retrieved_at"] = time.time()
+                    job["result_retrieved_mono"] = time.monotonic()
+                if downloads >= MAX_RESULT_DOWNLOADS:
+                    job["result_bytes"] = None
                 job["updated_at"] = time.time()
 
             return self._serialize_job(job), result_bytes
+
+    def peek_result(self, job_id, origin=ANY_ORIGIN):
+        """The job and its PDF's size (None when gone) without counting a download."""
+        with self.jobs_lock:
+            self._cleanup_expired_jobs_locked()
+            job = self._visible_job_locked(job_id, origin)
+            if not job:
+                return None, None
+            result_bytes = job.get("result_bytes")
+            return self._serialize_job(job), len(result_bytes) if result_bytes else None
 
     def is_busy(self):
         with self.jobs_lock:
@@ -165,11 +316,13 @@ class ScanWorker(threading.Thread):
 
     def run(self):
         logger.info("ScanWorker started")
+        self._sweep_when_idle(min_age_seconds=0)
         while self.running:
             try:
                 job_id = self.scan_queue.get(timeout=0.5)
             except queue.Empty:
                 self._cleanup_expired_jobs()
+                self._sweep_when_idle()
                 continue
 
             if job_id is None:
@@ -183,6 +336,16 @@ class ScanWorker(threading.Thread):
                 self._cleanup_expired_jobs()
 
         logger.info("ScanWorker stopped")
+
+    def _sweep_when_idle(self, min_age_seconds=STALE_DIRECTORY_MIN_AGE_SECONDS):
+        now = time.monotonic()
+        if now < self._next_sweep_at or self.current_job_id is not None:
+            return
+        with self.active_scan_process_lock:
+            if self.active_scan_process is not None:
+                return
+        self._next_sweep_at = now + STALE_SWEEP_INTERVAL_SECONDS
+        sweep_stale_directories(min_age_seconds=min_age_seconds)
 
     def stop(self):
         self.running = False
@@ -302,6 +465,8 @@ class ScanWorker(threading.Thread):
         request_payload = {
             "job_id": job_id,
             "scan_timeout_seconds": self.scan_timeout_seconds,
+            # The child stops and removes this folder if this process disappears.
+            "parent_pid": os.getpid(),
         }
         with open(request_path, "w", encoding="utf-8") as request_file:
             json.dump(request_payload, request_file, indent=2)
@@ -312,30 +477,36 @@ class ScanWorker(threading.Thread):
                 self._build_scan_subprocess_command(work_dir),
                 cwd=os.path.dirname(os.path.abspath(__file__)),
             )
+            self._child_job.assign(process)
             with self.active_scan_process_lock:
                 self.active_scan_process = process
 
+            def apply_state(state):
+                nonlocal last_state_signature, last_progress_at, last_state_status
+                if not state or not isinstance(state.get("status"), str):
+                    return
+                signature = json.dumps(
+                    [
+                        state.get("status"),
+                        state.get("page_count", 0),
+                        (state.get("error") or {}).get("code"),
+                    ],
+                    sort_keys=True,
+                )
+                if signature == last_state_signature:
+                    return
+                last_state_signature = signature
+                last_progress_at = time.monotonic()
+                last_state_status = state.get("status")
+                progress_payload = {}
+                if isinstance(state.get("page_count"), int):
+                    progress_payload["page_count"] = state["page_count"]
+                if "error" in state:
+                    progress_payload["error"] = state["error"]
+                on_progress(state["status"], **progress_payload)
+
             while True:
-                state = self._read_state_file(state_path)
-                if state:
-                    signature = json.dumps(
-                        [
-                            state.get("status"),
-                            state.get("page_count", 0),
-                            (state.get("error") or {}).get("code"),
-                        ],
-                        sort_keys=True,
-                    )
-                    if signature != last_state_signature:
-                        last_state_signature = signature
-                        last_progress_at = time.monotonic()
-                        last_state_status = state.get("status")
-                        progress_payload = {}
-                        if "page_count" in state:
-                            progress_payload["page_count"] = state["page_count"]
-                        if "error" in state:
-                            progress_payload["error"] = state["error"]
-                        on_progress(state["status"], **progress_payload)
+                apply_state(self._read_state_file(state_path))
 
                 return_code = process.poll()
                 if return_code is not None:
@@ -362,6 +533,8 @@ class ScanWorker(threading.Thread):
                 time.sleep(0.25)
 
             final_state = self._read_state_file(state_path)
+            # The child's last state carries the page count the 250 ms polls may have missed.
+            apply_state(final_state)
             if process.returncode == 0 and os.path.exists(result_path):
                 with open(result_path, "rb") as result_file:
                     return io.BytesIO(result_file.read())
@@ -439,12 +612,18 @@ class ScanWorker(threading.Thread):
                 for key in ("job_id", "doc_id", "page_count", "callback_url", "origin")
             }
             job["callback_state"] = "sending"
-        thread = threading.Thread(
-            target=self._send_callback,
-            args=(delivery, pdf_bytes),
-            daemon=True,
-            name=f"ScanLinkCallback-{job_id[:8]}",
-        )
+        if not self._callback_slots.acquire(blocking=False):
+            logger.warning("Not sending job %s: %s callbacks are already being sent", job_id, MAX_CALLBACKS_IN_FLIGHT)
+            self._record_callback(job_id, "failed", reason="busy")
+            return
+
+        def deliver():
+            try:
+                self._send_callback(delivery, pdf_bytes)
+            finally:
+                self._callback_slots.release()
+
+        thread = threading.Thread(target=deliver, daemon=True, name=f"ScanLinkCallback-{job_id[:8]}")
         self.callback_thread = thread
         thread.start()
 
@@ -456,46 +635,47 @@ class ScanWorker(threading.Thread):
         # The website may have been unlinked while the scanner ran.
         if not self._callback_allowed(callback_url, job.get("origin")):
             logger.warning(
-                "Not sending job %s to %s: that website is not linked to ScanLink", job_id, callback_url
+                "Not sending job %s to %r: that website is not linked to ScanLink", job_id, callback_url
             )
             self._record_callback(job_id, "refused", reason="not_linked")
             return
-        if requests is None:
-            logger.warning("requests is not installed; cannot send job %s to its callback", job_id)
-            self._record_callback(job_id, "failed", reason="unavailable")
-            return
 
-        files = {"pdf": (f"scan_{job_id}.pdf", pdf_bytes, "application/pdf")}
-        data = {
-            "job_id": job_id,
-            "doc_id": job.get("doc_id"),
-            "page_count": job.get("page_count", 0),
-            "status": "completed",
-        }
+        fields = [("job_id", job_id)]
+        if job.get("doc_id") is not None:
+            fields.append(("doc_id", job["doc_id"]))
+        fields += [("page_count", job.get("page_count", 0)), ("status", "completed")]
+        files = [("pdf", (f"scan_{job_id}.pdf", pdf_bytes, "application/pdf"))]
         try:
-            # No redirects: a linked website must not hand the document on elsewhere.
-            response = requests.post(
+            status_code = post_scan(
                 callback_url,
-                files=files,
-                data=data,
-                timeout=CALLBACK_TIMEOUT_SECONDS,
-                allow_redirects=False,
+                fields,
+                files,
+                delivery_id=job_id,
+                user_agent=f"ScanLink/{APP_VERSION}",
             )
-        except Exception as exc:
-            logger.error("Could not send job %s to %s: %s", job_id, callback_url, exc)
+        except CallbackRefused as exc:
+            logger.warning("Not sending job %s to %r: %s", job_id, callback_url, exc)
+            self._record_callback(job_id, "refused", reason=exc.reason)
+            return
+        except CallbackFailed as exc:
+            logger.error("Could not send job %s to %r: %s", job_id, callback_url, exc)
+            self._record_callback(job_id, "failed", reason="unreachable")
+            return
+        except Exception:
+            logger.exception("Could not send job %s to %r", job_id, callback_url)
             self._record_callback(job_id, "failed", reason="unreachable")
             return
 
-        if 200 <= response.status_code < 300:
-            logger.info("Sent job %s to %s", job_id, callback_url)
-            self._record_callback(job_id, "delivered", status_code=response.status_code)
+        if 200 <= status_code < 300:
+            logger.info("Sent job %s to %r", job_id, callback_url)
+            self._record_callback(job_id, "delivered", status_code=status_code)
         else:
             logger.warning(
                 "Callback for job %s answered %s; the result stays available to poll",
                 job_id,
-                response.status_code,
+                status_code,
             )
-            self._record_callback(job_id, "failed", status_code=response.status_code)
+            self._record_callback(job_id, "failed", status_code=status_code)
 
     def _record_callback(self, job_id, state, **detail):
         with self.jobs_lock:
@@ -526,6 +706,8 @@ class ScanWorker(threading.Thread):
                 return None
             job.update(updates)
             job["updated_at"] = updates.get("updated_at", time.time())
+            if updates.get("completed_at") is not None:
+                job["finished_mono"] = time.monotonic()
             return self._serialize_job(job)
 
     def _serialize_job(self, job):
@@ -558,7 +740,9 @@ class ScanWorker(threading.Thread):
             self._cleanup_expired_jobs_locked()
 
     def _cleanup_expired_jobs_locked(self):
-        now = time.time()
+        # Monotonic, so a wall-clock jump (time sync, resume) neither deletes an
+        # unread result nor keeps one in memory for days.
+        now = time.monotonic()
         expired_job_ids = []
 
         for job_id, job in self.jobs.items():
@@ -566,13 +750,20 @@ class ScanWorker(threading.Thread):
             if status not in TERMINAL_STATUSES:
                 continue
 
-            completed_at = job.get("completed_at") or job.get("updated_at") or now
-            age_seconds = now - completed_at
+            finished = job.setdefault("finished_mono", now)
+            retrieved = job.get("result_retrieved_mono")
+            if (
+                job.get("result_bytes") is not None
+                and retrieved is not None
+                and now - retrieved >= RESULT_RETRY_GRACE_SECONDS
+            ):
+                job["result_bytes"] = None
+
             ttl_seconds = self.job_ttl_seconds
             if status == "completed" and job.get("result_bytes") is not None:
                 ttl_seconds = self.result_ttl_seconds
 
-            if age_seconds >= ttl_seconds:
+            if now - finished >= ttl_seconds:
                 expired_job_ids.append(job_id)
 
         for job_id in expired_job_ids:

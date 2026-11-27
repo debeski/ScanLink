@@ -1,7 +1,9 @@
 import json
 import os
+import shutil
 import sys
 import tempfile
+import threading
 import time
 import tkinter as tk
 
@@ -44,6 +46,69 @@ def _write_result(work_dir, pdf_buffer):
         result_file.write(pdf_buffer.getvalue())
 
 
+def _parent_alive_check(parent_pid):
+    """A function telling whether ``parent_pid`` still runs, or None when it cannot be watched."""
+    if not isinstance(parent_pid, int) or parent_pid <= 0 or parent_pid == os.getpid():
+        return None
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            # Opened once, now: a handle keeps naming this process even if its id is reused.
+            handle = kernel32.OpenProcess(0x00100000, False, parent_pid)  # SYNCHRONIZE
+        except Exception:
+            return None
+        if not handle:
+            return lambda: False
+        return lambda: kernel32.WaitForSingleObject(handle, 0) != 0  # WAIT_OBJECT_0: ended
+
+    direct_child = os.getppid() == parent_pid
+
+    def alive():
+        # A direct child is re-parented when its parent ends, even while the
+        # parent is still an unreaped zombie.
+        if direct_child and os.getppid() != parent_pid:
+            return False
+        try:
+            os.kill(parent_pid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
+
+    return alive
+
+
+def watch_parent(parent_pid, on_gone, interval=1.0):
+    """Call ``on_gone`` from a daemon thread once ``parent_pid`` has ended; returns the thread."""
+    alive = _parent_alive_check(parent_pid)
+    if alive is None:
+        return None
+
+    def loop():
+        while alive():
+            time.sleep(interval)
+        on_gone()
+
+    thread = threading.Thread(target=loop, daemon=True, name="ScanLinkParentWatch")
+    thread.start()
+    return thread
+
+
+def _abandon(work_dir):
+    # ScanLink itself is gone: nobody will collect this scan, so drop it and
+    # end the process, which also releases the scanner.
+    logger.warning("ScanLink ended during a scan; the scan child stops and removes %r", work_dir)
+    shutil.rmtree(work_dir, ignore_errors=True)
+    os._exit(4)
+
+
 def is_job_directory(work_dir):
     """True only for a directory ScanWorker created with tempfile.mkdtemp()."""
     path = os.path.abspath(work_dir)
@@ -66,6 +131,7 @@ def run_scan_job(work_dir):
         request = _read_request(work_dir)
         job_id = request.get("job_id") or "scan-job"
         timeout_seconds = int(request.get("scan_timeout_seconds") or 0)
+        watch_parent(request.get("parent_pid"), lambda: _abandon(work_dir))
 
         root = tk.Tk()
         root.withdraw()
@@ -78,7 +144,11 @@ def run_scan_job(work_dir):
         if timeout_seconds > 0:
             deadline = time.monotonic() + timeout_seconds
 
+        pages = {"count": 0}
+
         def on_progress(status, **data):
+            if isinstance(data.get("page_count"), int):
+                pages["count"] = data["page_count"]
             _write_state(work_dir, status, **data)
 
         _write_state(work_dir, "processing")
@@ -89,7 +159,7 @@ def run_scan_job(work_dir):
         )
         _write_result(work_dir, pdf_buffer)
         pdf_buffer.close()
-        _write_state(work_dir, "completed")
+        _write_state(work_dir, "completed", page_count=pages["count"])
         return 0
     except ScanError as exc:
         _write_state(

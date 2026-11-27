@@ -212,6 +212,9 @@ class ScannerManager:
                         deadline,
                         show_ui=show_scanner_ui,
                     )
+            except ScanError:
+                # A deadline reached mid-acquisition stays a timeout, not acquire_failed.
+                raise
             except Exception as exc:
                 exc_name = exc.__class__.__name__
                 if exc_name == "DSTransferCancelled":
