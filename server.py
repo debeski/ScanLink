@@ -1,4 +1,5 @@
 import io
+import json
 import socket
 import ssl
 import threading
@@ -6,8 +7,9 @@ import time
 from urllib.parse import urlparse, urlsplit
 
 from flask import Flask, Response, jsonify, request, send_file
+from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException
-from werkzeug.serving import WSGIRequestHandler, make_server
+from werkzeug.serving import ThreadedWSGIServer, WSGIRequestHandler
 
 from utils import (
     APP_ARCH,
@@ -21,8 +23,9 @@ from utils import (
     load_config,
     normalize_origin,
 )
+from callback_transport import DELIVERY_HEADER
 from sites import LinkError, SiteRegistry
-from worker import BusyError, CallbackNotAllowedError
+from worker import BusyError, CallbackNotAllowedError, InvalidDocIdError
 
 logger = get_logger()
 
@@ -33,6 +36,23 @@ LOOPBACK_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
 MAX_REQUEST_BYTES = 64 * 1024
 # Per-connection socket timeout, including the TLS handshake.
 REQUEST_TIMEOUT_SECONDS = 30
+# A request's line, headers and body must all arrive within this many seconds
+# of the connection asking for it, however slowly the bytes trickle in.
+REQUEST_DEADLINE_SECONDS = 30
+# Connections served at once per listener; further ones are closed at accept.
+MAX_CONCURRENT_CONNECTIONS = 64
+
+
+def _reject_constant(name):
+    raise ValueError(f"{name} is not valid JSON")
+
+
+class StrictJSONProvider(DefaultJSONProvider):
+    """Standard JSON only: ``NaN`` and ``Infinity`` would be echoed back as invalid JSON."""
+
+    def loads(self, s, **kwargs):
+        kwargs.setdefault("parse_constant", _reject_constant)
+        return json.loads(s, **kwargs)
 
 
 def is_loopback_host(host):
@@ -44,6 +64,7 @@ def is_loopback_host(host):
 
 def create_app(worker, shutdown_event, transport_state, sites=None):
     app = Flask(__name__)
+    app.json = StrictJSONProvider(app)
     app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
     if sites is None:
         config = load_config()
@@ -124,6 +145,12 @@ def create_app(worker, shutdown_event, transport_state, sites=None):
         if not is_loopback_host(request.host):
             return error_response(
                 403, "invalid_host", "ScanLink only answers requests addressed to localhost."
+            )
+        # ScanLink's own callback deliveries never reach public hosts only, but
+        # if one ever arrived here it must not act on this computer.
+        if DELIVERY_HEADER in request.headers:
+            return error_response(
+                403, "local_only", "ScanLink does not accept its own scan deliveries."
             )
         origin = request.headers.get("Origin")
         if is_browser_endpoint(request.path):
@@ -208,7 +235,9 @@ def create_app(worker, shutdown_event, transport_state, sites=None):
         if error is not None:
             return error
 
-        doc_id = data.get("doc_id") or data.get("docId")
+        doc_id = data.get("doc_id")
+        if doc_id is None:
+            doc_id = data.get("docId")
         callback_url = data.get("callback_url") or data.get("callback")
 
         try:
@@ -219,6 +248,8 @@ def create_app(worker, shutdown_event, transport_state, sites=None):
                 source="api",
                 origin=request.headers.get("Origin"),
             )
+        except InvalidDocIdError as exc:
+            return error_response(400, "invalid_doc_id", str(exc))
         except CallbackNotAllowedError as exc:
             return error_response(400, "callback_not_allowed", str(exc))
         except BusyError as exc:
@@ -244,7 +275,7 @@ def create_app(worker, shutdown_event, transport_state, sites=None):
             )
         return jsonify(job)
 
-    @app.route("/scan/<job_id>/result", methods=["GET", "OPTIONS"])
+    @app.route("/scan/<job_id>/result", methods=["GET", "HEAD", "OPTIONS"])
     def get_scan_result(job_id):
         if request.method == "OPTIONS":
             return empty_options_response()
@@ -262,6 +293,18 @@ def create_app(worker, shutdown_event, transport_state, sites=None):
                 "The scan result is not ready yet.",
                 current_status=job["status"],
             )
+
+        if request.method == "HEAD":
+            # Asking about the result must not spend the download.
+            _job, size = worker.peek_result(job_id, origin=origin)
+            if not size:
+                return error_response(
+                    410, "result_unavailable", "The scan result is no longer available."
+                )
+            response = Response(status=200, mimetype="application/pdf")
+            response.headers["Content-Length"] = str(size)
+            response.headers["Content-Disposition"] = f"attachment; filename=scan_{job_id}.pdf"
+            return response
 
         updated_job, result_bytes = worker.consume_result(job_id, origin=origin)
         if not updated_job:
@@ -307,6 +350,8 @@ def create_app(worker, shutdown_event, transport_state, sites=None):
                 metadata=data.get("metadata"),
                 source="protocol",
             )
+        except InvalidDocIdError as exc:
+            return error_response(400, "invalid_doc_id", str(exc))
         except CallbackNotAllowedError as exc:
             return error_response(400, "callback_not_allowed", str(exc))
         except BusyError as exc:
@@ -340,21 +385,90 @@ def emit_scan_status(job_id, status, **kwargs):
     return None
 
 
+class _DeadlineReader(io.RawIOBase):
+    """Socket reads that end at the handler's request deadline, not per byte."""
+
+    def __init__(self, handler):
+        super().__init__()
+        self._handler = handler
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        remaining = self._handler.read_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("The request was not received in time.")
+        connection = self._handler.connection
+        connection.settimeout(min(REQUEST_TIMEOUT_SECONDS, remaining))
+        try:
+            return connection.recv_into(buffer)
+        finally:
+            connection.settimeout(REQUEST_TIMEOUT_SECONDS)
+
+
 class LoopbackRequestHandler(WSGIRequestHandler):
     def setup(self):
         self.timeout = REQUEST_TIMEOUT_SECONDS
+        self.read_deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
         super().setup()
+        self.rfile = io.BufferedReader(_DeadlineReader(self))
+
+    def handle_one_request(self):
+        # Waiting for the next request on a kept-alive connection counts too.
+        self.read_deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
+        try:
+            return super().handle_one_request()
+        except TimeoutError:
+            self.close_connection = True
 
     def handle(self):
         # The listener accepts without handshaking, so a client that never sends
-        # a TLS hello only holds its own thread, and only until the timeout.
+        # a TLS hello only holds its own thread, and only until the deadline.
         if isinstance(self.connection, ssl.SSLSocket):
+            timer = threading.Timer(REQUEST_DEADLINE_SECONDS, self._abort)
+            timer.daemon = True
+            timer.start()
             try:
                 self.connection.do_handshake()
             except OSError as exc:
                 logger.debug("TLS handshake from %s failed: %s", self.client_address, exc)
                 return
+            finally:
+                timer.cancel()
         super().handle()
+
+    def _abort(self):
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+class BoundedThreadedWSGIServer(ThreadedWSGIServer):
+    """Serves at most ``MAX_CONCURRENT_CONNECTIONS`` connections at once; closes the rest."""
+
+    def __init__(self, *args, max_connections=None, **kwargs):
+        self.max_connections = max_connections or MAX_CONCURRENT_CONNECTIONS
+        self._slots = threading.BoundedSemaphore(self.max_connections)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            logger.warning("Refusing a connection from %s: %s are open", client_address, self.max_connections)
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 class LoopbackServer(threading.Thread):
@@ -376,12 +490,11 @@ class LoopbackServer(threading.Thread):
         try:
             if self.ssl_context is not None:
                 self.ssl_context.sni_callback = self._select_context
-            self.httpd = make_server(
+            self.httpd = BoundedThreadedWSGIServer(
                 self.host,
                 self.port,
                 self.app,
-                threaded=True,
-                request_handler=LoopbackRequestHandler,
+                LoopbackRequestHandler,
                 ssl_context=self.ssl_context,
             )
             if self.ssl_context is not None:

@@ -88,11 +88,11 @@ def main():
 
     set_status_callback(None)
 
-    def confirm_link(origin, other_sites):
+    def confirm_link(origin, other_sites, added_sites=None, cancel=None):
         from gui.dialogs import confirm_site_link
 
         return worker.run_gui_task(
-            lambda: confirm_site_link(origin, other_sites, LINK_PROMPT_SECONDS),
+            lambda: confirm_site_link(origin, other_sites, LINK_PROMPT_SECONDS, added_sites, cancel),
             timeout=LINK_PROMPT_SECONDS + 15,
         )
 

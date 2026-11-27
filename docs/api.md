@@ -80,11 +80,14 @@ Accepted aliases:
 - `doc_id` or `docId`
 - `callback_url` or `callback`
 
-`callback_url` must point at a website the operator allowed: one linked with `POST /link`, or one listed in `cors_origins`. Its scheme, host and port must match that website exactly.
+`doc_id` is optional: text of at most 200 characters without control, line-separator or invisible formatting characters (such as bidi overrides), or a whole number. JSON request bodies must be standard JSON; `NaN` and `Infinity` are refused as `invalid_json`.
+
+`callback_url` must be an `https` URL on a website the operator allowed: one linked with `POST /link`, or one listed in `cors_origins`. Its scheme, host and port must match that website exactly.
 - A request from a browser `Origin` may only name its own website or the sites linked together with it.
 - A local tool with no `Origin` may name any allowed website.
+- The host must not be `localhost`, `*.localhost` or an address on this computer or a private network: loopback, private, carrier-grade NAT, link-local (including cloud metadata addresses), unique-local, multicast, reserved and unspecified addresses are refused, in any spelling (`127.1`, `2130706433`, `[::ffff:127.0.0.1]`).
 
-Anything else is refused before a scan starts. The [Developer Guide](developer-guide.md#callback-url) describes how the scan is delivered.
+Anything else is refused before a scan starts. When the scan is sent, ScanLink resolves the host name itself and refuses the delivery if any address it resolves to falls in those ranges or belongs to this computer (see the `refused` callback state below). The [Developer Guide](developer-guide.md#callback-url) describes how the scan is delivered.
 
 Response `202`:
 
@@ -101,6 +104,7 @@ Errors:
 | --- | --- | --- |
 | 400 | `invalid_json` | Body could not be parsed as JSON. |
 | 400 | `invalid_payload` | JSON root was not an object. |
+| 400 | `invalid_doc_id` | `doc_id` is not short text or a whole number, or contains control characters. |
 | 400 | `invalid_callback` | Callback URL was not a string or could not be parsed. |
 | 400 | `callback_not_allowed` | Callback URL does not point at a website this request may name (see above). |
 | 400 | `invalid_metadata` | `metadata` was provided but is not an object. |
@@ -157,8 +161,8 @@ A job started with a callback URL also reports how the callback went, without th
 | `waiting` | The scan has not finished. |
 | `sending` | The PDF is being posted. |
 | `delivered` | The callback answered with a 2xx `status_code`. |
-| `failed` | The callback answered with another `status_code` (redirects are not followed), or `reason` is `unreachable` or `unavailable`. |
-| `refused` | `reason: not_linked`: the website was unlinked while the scanner ran, so nothing was sent. |
+| `failed` | The callback answered with another `status_code` (redirects are not followed), or `reason` is `unreachable` (no connection, or no answer within two minutes) or `busy` (two other callbacks were still being sent). |
+| `refused` | Nothing was sent. `reason` is `not_linked` (the website was unlinked while the scanner ran) or `blocked_address` (its host resolved to this computer or a private network address). |
 | `not_sent` | The scan ended without a PDF. |
 
 Terminal failure response:
@@ -183,7 +187,9 @@ Errors:
 
 ## GET /scan/<job_id>/result
 
-Downloads the scanned PDF for a completed job. `completed` is published only after the child has exited and the parent has stored the PDF. Concurrent downloads are single-use: exactly one receives the bytes; later requests return `410` until the job metadata expires. PDF bytes are freed immediately after retrieval, while metadata remains until `job_ttl_seconds` from completion.
+Downloads the scanned PDF for a completed job. `completed` is published only after the child has exited and the parent has stored the PDF. The PDF can be downloaded twice, the second time within 30 seconds of the first, so a client whose first download was cut off can retry once (on either transport). Then its bytes are freed, and later requests return `410` until the job metadata expires `job_ttl_seconds` after completion. An unread PDF is kept for `result_ttl_seconds`. Both lifetimes are measured on a monotonic clock, so changing the computer's clock does not shorten or extend them.
+
+`HEAD` answers `200` with the PDF's `Content-Length`, or `410`, without counting as a download.
 
 Response:
 
@@ -197,7 +203,7 @@ Errors:
 | --- | --- | --- |
 | 404 | `job_not_found` | Job does not exist or expired. |
 | 409 | `result_not_ready` | Job is not completed yet. |
-| 410 | `result_unavailable` | Result was already consumed. |
+| 410 | `result_unavailable` | The PDF was already downloaded twice, or its retry window has passed. |
 
 ## POST /internal/protocol/scan
 
@@ -209,7 +215,7 @@ Internal endpoint used by `scanlink://` launches to forward commands into an alr
 
 Requests ScanLink shutdown. This is intended for local control, not browser integrations.
 
-`/shutdown` and `/internal/protocol/scan` refuse browser requests: any request carrying an `Origin` or `Sec-Fetch-Site` header receives `403 local_only`. Local tools such as the protocol forwarder, PowerShell or `curl` send neither header.
+`/shutdown` and `/internal/protocol/scan` refuse browser requests: any request carrying an `Origin` or `Sec-Fetch-Site` header receives `403 local_only`. Local tools such as the protocol forwarder, PowerShell or `curl` send neither header. Every endpoint also answers `403 local_only` to a request carrying `X-ScanLink-Delivery`, the header ScanLink's own callback deliveries send.
 
 ## Scan Error Codes
 
@@ -220,7 +226,7 @@ Errors from the scanner/runtime layer can appear inside the job `error` object:
 | `twain_unavailable` | `pytwain` or TWAIN support is unavailable. |
 | `scanner_selection_cancelled` | User cancelled scanner selection. |
 | `open_source_failed` | Selected scanner could not be opened. |
-| `acquire_timeout` | Scanner acquisition exceeded the scan deadline. |
+| `acquire_timeout` | Scanner acquisition exceeded the scan deadline, including while pages were still arriving (status `timed_out`). |
 | `acquire_failed` | Scanner acquisition failed. |
 | `no_pages_scanned` | Scan ended without captured pages. |
 | `image_runtime_unavailable` | Pillow is unavailable. |
@@ -281,10 +287,30 @@ Request:
 ```
 
 `sites` lists the other websites the requesting site's administrator allows, at
-most 19; the requesting site is always included. An unlinked website opens an
-approval window in ScanLink naming it and its list, and the request waits up to
-two minutes for the operator's answer. A website that is already linked replaces
-its list without asking again.
+most 19; the requesting site is always included. Origins are compared in their
+ASCII form: a non-ASCII host name becomes its `xn--` (IDNA) form, and hosts with
+invisible or bidi control characters or a trailing dot are refused as
+`invalid_site`. An unlinked website opens an approval window in ScanLink naming
+it and every site on its list, and the request waits up to two minutes for the
+operator's answer.
+
+A website that is already linked may drop sites from its list without asking. A
+list that gains a site opens the window again, naming the sites it adds; until
+the operator allows them, the website stays linked with the list approved
+before.
+
+Approval windows are rationed:
+- A website whose window was declined cannot ask again for 10 minutes; one whose
+  window went unanswered, for 5 minutes. The wait applies to its whole domain
+  (`evil1.example.org` and `evil2.example.org:8443` share `example.org`).
+- After a window for a website ScanLink does not know yet closes without
+  **Allow**, other unknown websites wait 2 minutes before opening one.
+- A website ScanLink already knows (linked, on a linked site's list, or in
+  `cors_origins`) is not held up by that wait, and closes an open window of an
+  unknown website to ask its own question; the closed window's request answers
+  `409 link_pending`.
+- The window shows above other windows without taking the keyboard; its default
+  button is **Don't allow**.
 
 Success:
 
@@ -302,9 +328,10 @@ Errors:
 | --- | --- | --- |
 | `400` | `origin_required` | No well-formed `Origin` (local tools and `Origin: null` cannot link). |
 | `400` | `invalid_payload`, `invalid_sites`, `invalid_site`, `too_many_sites` | The body is not `{"sites": [origins]}` with at most 19 website origins. |
-| `403` | `link_declined` | The operator chose **Don't allow**; the website cannot ask again for 10 minutes. |
+| `403` | `link_declined` | The operator chose **Don't allow**; websites of this domain cannot ask again for 10 minutes. A linked website keeps its previous list. |
 | `408` | `link_timeout` | Nobody answered the window within two minutes. |
-| `409` | `link_pending` | Another website's approval window is open. |
+| `409` | `link_pending` | Another website's approval window is open, or this request's window was closed for a website ScanLink already knows. |
+| `429` | `link_rate_limited` | A window for this domain went unanswered in the last 5 minutes, or one for another unknown website closed without **Allow** in the last 2 minutes. |
 | `409` | `too_many_links` | 50 websites are linked; unlink one first. |
 
 ## Automatic HTTPS setup status (0.7.5b1)
