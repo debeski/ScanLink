@@ -23,11 +23,15 @@ class OriginTests(unittest.TestCase):
             ("https://Archive.Example:443/", "https://archive.example"),
             ("http://intranet:8080", "http://intranet:8080"),
             ("http://[::1]:8000", "http://[::1]:8000"),
+            # R2-115: look-alike names are shown as the browser sends them.
+            ("https://\u0430pple.example", "https://xn--pple-43d.example"),
         ):
             with self.subTest(value=value):
                 self.assertEqual(normalize_origin(value), expected)
         for value in ("*", "null", "", None, 5, "file:///c:/x", "https://*.example", "https://a.example/path",
-                      "https://user:pw@a.example", "https://a.example?x=1", "javascript:alert(1)", "https://"):
+                      "https://user:pw@a.example", "https://a.example?x=1", "javascript:alert(1)", "https://",
+                      "https://archive.office.test\u202eelpmaxe.evil", "https://arch\u200bive.example",
+                      "https://archive.example."):
             with self.subTest(value=value):
                 self.assertIsNone(normalize_origin(value))
 
@@ -52,6 +56,7 @@ class LinkTests(unittest.TestCase):
     def setUp(self):
         self.answers = []
         self.asked = []
+        self.added = []
         self.saved = []
         self.now = [1000.0]
         self.sites = SiteRegistry(
@@ -65,8 +70,9 @@ class LinkTests(unittest.TestCase):
             self.worker, threading.Event(), {"http_enabled": True}, self.sites
         ).test_client()
 
-    def confirm(self, origin, other_sites):
+    def confirm(self, origin, other_sites, added_sites=None, cancel=None):
         self.asked.append((origin, other_sites))
+        self.added.append(added_sites)
         return self.answers.pop(0) if self.answers else None
 
     def link(self, headers, sites=()):
@@ -97,14 +103,96 @@ class LinkTests(unittest.TestCase):
         self.assertEqual(self.client.post("/scan", json={}, headers=CRM).status_code, 202)
         self.assertEqual(self.client.post("/scan", json={}, headers=EVIL).status_code, 403)
 
-    def test_a_linked_site_changes_its_list_without_asking_again(self):
+    def test_a_linked_site_shortens_its_list_without_asking_again(self):
         self.answers.append(True)
-        self.link(ARCHIVE, ["https://crm.example"])
+        self.link(ARCHIVE, ["https://crm.example", "https://sales.example"])
         response = self.link(ARCHIVE, ["https://sales.example"])
         self.assertEqual(response.get_json()["prompted"], False)
         self.assertEqual(len(self.asked), 1)
         self.assertEqual(self.client.get("/health", headers=CRM).status_code, 403)
         self.assertEqual(self.client.get("/health", headers={"Origin": "https://sales.example"}).status_code, 200)
+
+    def test_a_linked_site_that_widens_its_list_asks_again(self):
+        # R2-054: one approval used to allow any later list without a window.
+        self.answers.append(True)
+        self.link(ARCHIVE, ["https://crm.example"])
+        self.answers.append(True)
+        response = self.link(ARCHIVE, ["https://crm.example", "https://sales.example"])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["prompted"], True)
+        self.assertEqual(self.added, [None, ["https://sales.example"]])
+        self.assertEqual(self.client.get("/health", headers={"Origin": "https://sales.example"}).status_code, 200)
+
+    def test_a_declined_widening_keeps_the_approved_list(self):
+        self.answers.append(True)
+        self.link(ARCHIVE, ["https://crm.example"])
+        self.answers.append(False)
+        response = self.link(ARCHIVE, ["https://crm.example", "https://evil.example"])
+        self.assertEqual((response.status_code, response.get_json()["error"]["code"]), (403, "link_declined"))
+        self.assertEqual(self.client.get("/health", headers=EVIL).status_code, 403)
+        self.assertEqual(self.client.get("/health", headers=CRM).status_code, 200)
+        self.assertEqual(self.sites.link_for("https://archive.example")["sites"],
+                         ["https://archive.example", "https://crm.example"])
+        unanswered = self.link(ARCHIVE, ["https://crm.example", "https://evil.example"])
+        self.assertEqual(unanswered.get_json()["error"]["code"], "link_declined")
+        self.assertEqual(len(self.asked), 2)
+
+    def test_unanswered_windows_cool_down_too(self):
+        # R2-056: an unanswered window could be reopened at once, forever.
+        first = self.link(EVIL)
+        self.assertEqual(first.get_json()["error"]["code"], "link_timeout")
+        again = self.link(EVIL)
+        self.assertEqual((again.status_code, again.get_json()["error"]["code"]), (429, "link_rate_limited"))
+        self.assertEqual(len(self.asked), 1)
+
+    def test_cooldowns_cover_the_whole_domain(self):
+        self.answers.append(False)
+        self.link({"Origin": "https://evil1.attacker.test"})
+        for origin in ("https://evil2.attacker.test", "https://evil1.attacker.test:8443", "http://attacker.test"):
+            with self.subTest(origin=origin):
+                response = self.link({"Origin": origin})
+                self.assertEqual(response.get_json()["error"]["code"], "link_declined")
+        self.assertEqual(len(self.asked), 1)
+
+    def test_unknown_websites_wait_between_windows(self):
+        self.link(EVIL)
+        response = self.link({"Origin": "https://other.example.net"})
+        self.assertEqual((response.status_code, response.get_json()["error"]["code"]), (429, "link_rate_limited"))
+        self.now[0] += 121
+        self.answers.append(True)
+        self.assertEqual(self.link({"Origin": "https://other.example.net"}).status_code, 200)
+        self.assertEqual(len(self.asked), 2)
+
+    def test_a_known_website_is_not_held_up_by_an_unknown_one(self):
+        self.answers.append(True)
+        self.link(ARCHIVE, ["https://crm.example"])
+        self.link(EVIL)  # unanswered: unknown websites now wait
+        self.answers.append(True)
+        self.assertEqual(self.link(CRM).status_code, 200)
+
+    def test_a_known_website_closes_an_unknown_websites_window(self):
+        self.answers.append(True)
+        self.link(ARCHIVE, ["https://crm.example"])
+        opened, cancelled = threading.Event(), {}
+
+        def confirm(origin, other_sites, added_sites=None, cancel=None):
+            if origin == EVIL["Origin"]:
+                opened.set()
+                cancelled["seen"] = cancel.wait(5)
+                return None
+            return True
+
+        self.sites._confirm = confirm
+        results = {}
+        thread = threading.Thread(target=lambda: results.setdefault("evil", self.link(EVIL)))
+        thread.start()
+        self.assertTrue(opened.wait(5))
+        crm = self.link(CRM)
+        thread.join(5)
+        self.assertTrue(cancelled["seen"])
+        self.assertEqual(crm.status_code, 200)
+        self.assertEqual(results["evil"].get_json()["error"]["code"], "link_pending")
+        self.assertEqual(self.client.get("/health", headers=EVIL).status_code, 403)
 
     def test_a_listed_site_cannot_change_another_sites_link(self):
         self.answers.append(True)
@@ -137,7 +225,7 @@ class LinkTests(unittest.TestCase):
     def test_one_approval_window_at_a_time(self):
         opened, release = threading.Event(), threading.Event()
 
-        def slow_confirm(origin, other_sites):
+        def slow_confirm(origin, other_sites, added_sites=None, cancel=None):
             opened.set()
             release.wait(5)
             return True

@@ -155,11 +155,12 @@ Any web page can open a `scanlink://` link, so a link whose callback is not an a
 
 When `callback_url` is provided, ScanLink posts the completed PDF to that URL after a successful scan.
 
-**Where a callback may go.** Only to a website the operator allowed, by linking it (`POST /link`) or listing it in `cors_origins`. The URL's scheme, host and port must match that website exactly. A URL with credentials (`https://site@other.example`) never matches.
+**Where a callback may go.** Only to an `https` URL on a website the operator allowed, by linking it (`POST /link`) or listing it in `cors_origins`. The URL's scheme, host and port must match that website exactly. A URL with credentials (`https://site@other.example`) never matches. The website must be on the public internet: a callback never reaches this computer (`localhost`, loopback, ScanLink itself) or a private network (private, carrier-grade NAT, link-local and cloud metadata, unique-local addresses), whatever the allowed list says.
 - **Browser request:** a scan started from a page (`POST /scan` with an `Origin`) may only name its own website or the sites linked together with it.
 - **Local tool or `scanlink://` link:** may name any allowed website.
 - **Refused before scanning:** anything else gets `400 callback_not_allowed`, and the scanner never starts.
 - **Re-checked before sending:** if the website was unlinked while the scanner ran, nothing is sent.
+- **Checked where it connects:** ScanLink resolves the host name itself when sending, refuses the delivery if any of its addresses is not a public one or belongs to this computer, and connects to the address it checked. A name re-pointed to `127.0.0.1` after the scan was requested (DNS rebinding) is refused (`refused`, `blocked_address`).
 
 **The request.** A `multipart/form-data` POST with:
 
@@ -170,8 +171,9 @@ When `callback_url` is provided, ScanLink posts the completed PDF to that URL af
 - `status`: `completed`
 
 **How it is sent.**
-- On its own thread, so a slow server never holds up the next scan.
-- Connect timeout 5 s, read timeout 30 s.
+- On its own thread, so a slow server never holds up the next scan. At most two callbacks are sent at once; a scan that finishes while two are still being sent is not sent (`failed`, `busy`).
+- Directly, never through a proxy. Connect timeout 5 s, and the whole delivery, up to the answer's status line and headers, ends after 120 s however slowly the server answers.
+- With `Accept-Encoding: identity` and an `X-ScanLink-Delivery: <job_id>` header. The answer's body is never read.
 - Redirects are not followed, so a website cannot pass the document on to another host.
 - Only a 2xx answer counts as delivered.
 - The PDF stays available to `GET /scan/<job_id>/result` either way. The job's `callback` field reports the outcome (see the [API Reference](api.md#get-scanjob_id)).
@@ -199,12 +201,12 @@ Only one scan job can be queued or running at a time. If another request arrives
 
 ## Result Retention
 
-Completed results are kept in memory temporarily. Defaults:
+Completed results are kept in memory temporarily, measured on a monotonic clock so a change to the computer's clock does not affect them. Defaults:
 
 - Job metadata TTL: 900 seconds.
-- Result PDF TTL: 300 seconds.
+- Result PDF TTL: 300 seconds while it is not downloaded.
 
-Downloading `/scan/<job_id>/result` consumes the stored PDF. A second download for the same job can return `410 result_unavailable`.
+Downloading `/scan/<job_id>/result` spends the stored PDF: one retry is answered within 30 seconds of the first download, for a download that was cut off, and later downloads return `410 result_unavailable`. `HEAD` on the result does not count as a download.
 
 ## Operational Notes
 

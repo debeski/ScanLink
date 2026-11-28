@@ -1,4 +1,5 @@
 import os
+import unicodedata
 import sys
 import json
 import logging
@@ -137,6 +138,25 @@ def _apply_scan_profile_migration(config):
     config["color_mode"] = DEFAULT_COLOR_MODE
     config["paper_protection"] = False
 
+def _ascii_host(host):
+    """A host name in its ASCII (IDNA) form, as browsers send it; None when it cannot be shown honestly.
+
+    Bidi overrides, zero-width and other invisible characters, wildcards and a
+    trailing dot are refused; other non-ASCII names become ``xn--`` labels, so
+    the approval window shows a look-alike name the way the browser sends it.
+    """
+    host = host.lower()
+    if not host or host.endswith(".") or "*" in host:
+        return None
+    if any(unicodedata.category(ch)[0] in "CZ" for ch in host):
+        return None
+    if host.isascii():
+        return host
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+
 def normalize_origin(value):
     """``scheme://host[:port]`` for an http(s) website origin, as browsers send it; else None.
 
@@ -153,8 +173,8 @@ def normalize_origin(value):
         return None
     if parts.username or parts.password or parts.query or parts.fragment or parts.path not in ("", "/"):
         return None
-    host = parts.hostname.lower()
-    if "*" in host or any(ch.isspace() for ch in host):
+    host = _ascii_host(parts.hostname)
+    if host is None:
         return None
     if ":" in host:
         host = f"[{host}]"
