@@ -2,6 +2,10 @@
 
 This file owns the release history for `ScanLink`.
 
+## v0.8.1
+
+- **Stable 0.8.1 For DjangoLux 1.17.0 (security)**: Promote the published and accepted 0.8.1b2, which includes 0.8.1b1. Scan callbacks are delivered to linked websites only, and only to public HTTPS targets: the host is checked again at delivery with no second lookup, no proxy is used and ScanLink's own endpoints refuse delivery requests (R2-010). Widening a linked list asks again, approval windows are rationed and show every site in full, callbacks and requests are bounded in time and number, and the scan result handling is hardened. No changes from the beta.
+
 ## v0.8.1b2
 
 - **Callbacks Reach Public HTTPS Websites Only (security, R2-010)**: a linked website could list `http://127.0.0.1:…`, `localhost`, private, link-local or metadata addresses, or ScanLink itself, and every scan was then posted there from the operator's computer without `Origin` or `Sec-Fetch-*`; a callback to `http://localhost:5000/shutdown` stopped ScanLink. New `callback_transport` module: `check_callback_url` requires `https` and refuses `localhost`, `*.localhost` and non-public address literals in any spelling (`127.1`, `2130706433`, `[::ffff:127.0.0.1]`) at submission (`400 callback_not_allowed`); `post_scan` resolves the host itself, refuses the delivery if any address is loopback, private, CGNAT, link-local, unique-local, multicast, reserved, unspecified, an embedded IPv4 of those (mapped, NAT64, 6to4, Teredo) or one of this computer's own, connects to the checked address with TLS verified for the host name and re-checks the peer, so DNS rebinding cannot reach this computer (`callback.state: refused`, `reason: blocked_address`). Deliveries carry `X-ScanLink-Delivery`, and every endpoint answers such a request with `403 local_only`. Callbacks use the standard library instead of `requests` and never a proxy.
